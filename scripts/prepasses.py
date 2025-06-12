@@ -59,6 +59,49 @@ def getCoherentImageChunks(img: Image.Image):
                     chunks.append(chunk)
     return chunks
 
+def toVerticalChunks(chunks: list[list[tuple[int, int]]]) -> list[list[tuple[int, int]]]:
+    out = []
+    for chunk in chunks:
+        chunk = sorted(chunk)
+        vChunks = []
+        v = chunk[0][0]
+        tmp = []
+        for x in chunk:
+            if x[0] == v:
+                tmp.append(x)
+            else:
+                vChunks.append(tmp)
+                tmp = [x]
+                v = x[0]
+        if tmp:
+            vChunks.append(tmp)
+        out.extend(vChunks)
+    return out
+
+def splitConnectedChunks(vChunks: list[list[tuple[int, int]]]) -> list[list[tuple[int,int]]]:
+    out = []
+
+    for vChunk in vChunks:
+        if not vChunk:
+            continue
+
+        group = [vChunk[0]]
+        for i in range(1, len(vChunk)):
+            prev = vChunk[i - 1]
+            curr = vChunk[i]
+
+            # prüfen, ob direkt angrenzend (hier: vertikal -> y-Wert +1)
+            if curr[1] == prev[1] + 1:
+                group.append(curr)
+            else:
+                out.append(group)
+                group = [curr]
+
+        out.append(group)
+
+    return out
+
+
 def visualizeChunks(img: Image.Image, chunks):
     out = Image.new("RGB", img.size)
     for chunk in tqdm(chunks, desc="Visualizing chunks"):
@@ -98,7 +141,7 @@ def sort(img: Image.Image, chunks, mode="lum", flipDir=False):
                     out.putpixel((x, target_ys[i]), sorted_pixels[i][1])
 
     threads = []
-    for chunk in tqdm(chunks, desc="Processing chunks"):
+    for chunk in chunks:
         t = threading.Thread(target=process_chunk, args=(chunk,))
         t.start()
         threads.append(t)

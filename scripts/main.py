@@ -1,6 +1,7 @@
 from PIL import Image
 import threading
 import os
+from datetime import datetime
 from tqdm import tqdm
 import prepasses
 
@@ -15,9 +16,10 @@ def loadImage() -> Image.Image:
 
 ###########################
 contrastLimLower = -5  
-contrastLimUpper = 100 
+contrastLimUpper = 180 
 sortMode = "lum"   
 inverse = False
+useVerticalSplitting = False
 ###########################
 
 image = loadImage()
@@ -26,6 +28,10 @@ contrastMask = prepasses.contrastMask(image, contrastLimLower, contrastLimUpper)
 contrastMask.show()
 
 chunks = prepasses.getCoherentImageChunks(contrastMask)
+if useVerticalSplitting:
+    chunks = prepasses.toVerticalChunks(chunks)
+    chunks = prepasses.splitConnectedChunks(chunks)
+
 
 results = {}
 threads = [
@@ -43,7 +49,10 @@ for t in threads:
     t.join()
 
 chunksVis = results["chunksVis"]
-sorted = results["sorted"]
+sorted: Image.Image = results["sorted"]
 
 chunksVis.show()
 sorted.show()
+
+now = datetime.now().strftime("%H-%M-%S")  # z.B. "14-23-07"
+sorted.save(f"assets/printouts/{now}.png")
