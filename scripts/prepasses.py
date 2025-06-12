@@ -1,0 +1,109 @@
+from PIL import Image
+import converters, math, random, threading
+from tqdm import tqdm
+
+def contrastMask(img: Image.Image, limLower, limUpper):
+    out: Image.Image = Image.new("L", img.size)
+    lowest = math.inf
+    highest = -math.inf
+    width, height = img.size
+    for x in tqdm(range(width), desc="Processing contrast mask"):
+        for y in range(height):
+            val = math.floor(converters.getLuminance(img.getpixel((x, y))))
+            
+            if val < lowest:
+                lowest = val
+            if val > highest:
+                highest = val
+            if limLower < val <= limUpper:
+                out.putpixel((x, y), 257)
+            else:
+                out.putpixel((x, y), 0)
+    return out
+
+
+def luminanceMask(img: Image.Image):
+    out: Image.Image = Image.new("RGB", img.size)
+    for x in range(img.size[0]):
+        for y in range(img.size[1]):
+            val = math.floor(converters.getLuminance(img.getpixel((x,y))))
+            out.putpixel((x,y), (val, val, val))
+    return out
+
+def getCoherentImageChunks(img: Image.Image):
+    img = img.convert("RGB")
+    width, height = img.size
+    visited = [[False for _ in range(height)] for _ in range(width)]
+    chunks = []
+
+    def get_neighbors(x, y):
+        for dx, dy in [(-1,0),(1,0),(0,-1),(0,1)]:
+            nx, ny = x + dx, y + dy
+            if 0 <= nx < width and 0 <= ny < height:
+                yield nx, ny
+
+    for x in tqdm(range(width), desc="Finding coherent chunks"):
+        for y in range(height):
+            if not visited[x][y] and img.getpixel((x, y)) == (255, 255, 255):
+                stack = [(x, y)]
+                chunk = []
+                visited[x][y] = True
+                while stack:
+                    cx, cy = stack.pop()
+                    chunk.append((cx, cy))
+                    for nx, ny in get_neighbors(cx, cy):
+                        if not visited[nx][ny] and img.getpixel((nx, ny)) == (255, 255, 255):
+                            visited[nx][ny] = True
+                            stack.append((nx, ny))
+                if chunk:
+                    chunks.append(chunk)
+    return chunks
+
+def visualizeChunks(img: Image.Image, chunks):
+    out = Image.new("RGB", img.size)
+    for chunk in tqdm(chunks, desc="Visualizing chunks"):
+        color = tuple(random.randint(0, 255) for _ in range(3))
+        for x, y in chunk:
+            out.putpixel((x, y), color)
+    return out
+
+from PIL import Image
+import math
+
+
+
+def sort(img: Image.Image, chunks, mode="lum", flipDir=False):
+    out = img.copy()  # wichtig: sonst modifizierst du das Originalbild
+    lock = threading.Lock()  # um Schreibzugriffe aufs Bild zu synchronisieren
+
+    def process_chunk(chunk):
+        chunk_dict = {}
+
+        for x, y in chunk:
+            if x not in chunk_dict:
+                chunk_dict[x] = []
+            chunk_dict[x].append((y, img.getpixel((x, y))))
+
+        for x in chunk_dict:
+            if not flipDir:
+                sorted_pixels = sorted(chunk_dict[x], key=lambda tup: converters.convert(tup[1], mode=mode))
+            else:
+                sorted_pixels = sorted(chunk_dict[x], key=lambda tup: -converters.convert(tup[1], mode=mode) + 254)
+
+            target_ys = sorted([y for y, _ in chunk_dict[x]])
+
+            # Thread-safe Schreibzugriff auf das Bild
+            with lock:
+                for i in range(len(target_ys)):
+                    out.putpixel((x, target_ys[i]), sorted_pixels[i][1])
+
+    threads = []
+    for chunk in tqdm(chunks, desc="Processing chunks"):
+        t = threading.Thread(target=process_chunk, args=(chunk,))
+        t.start()
+        threads.append(t)
+
+    for t in tqdm(threads, desc="Waiting for chunks to finish"):
+        t.join()
+
+    return out
