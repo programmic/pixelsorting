@@ -1,5 +1,5 @@
-from PIL import Image
-import math, os, random
+# converters.py
+
 import colorsys
 
 def convert(v, mode="lum") -> int:
@@ -30,3 +30,13 @@ def getHUE(v) -> int:
 def getR(v) -> int: return v[0]
 def getG(v) -> int: return v[1]
 def getB(v) -> int: return v[2]
+
+
+def rotate_coords(coords, img_size, angle):
+    width, height = img_size
+    if angle == 90:
+        return [(y, width - 1 - x) for x, y in coords]
+    elif angle == -90:
+        return [(height - 1 - y, x) for x, y in coords]
+    return coords  # 0° oder unsupported
+

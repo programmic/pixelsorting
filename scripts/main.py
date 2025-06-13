@@ -1,9 +1,12 @@
+# main.py
+
 from PIL import Image
 import threading
 import os
 from datetime import datetime
 from tqdm import tqdm
-import prepasses
+import passes as passes
+import converters as converters
 
 def loadImage() -> Image.Image:
     image_folder = "assets/images/"
@@ -15,31 +18,33 @@ def loadImage() -> Image.Image:
     raise FileNotFoundError("Kein gültiges Bild im Ordner gefunden.")
 
 ###########################
-contrastLimLower = -5  
-contrastLimUpper = 180 
+contrastLimLower = 20 
+contrastLimUpper = 200 
 sortMode = "lum"   
-inverse = False
-useVerticalSplitting = False
+inverse = True
+useVerticalSplitting = True
+rotateImage = True
 ###########################
 
 image = loadImage()
 
-contrastMask = prepasses.contrastMask(image, contrastLimLower, contrastLimUpper)
+contrastMask = passes.contrastMask(image, contrastLimLower, contrastLimUpper)
 contrastMask.show()
 
-chunks = prepasses.getCoherentImageChunks(contrastMask)
+chunks = passes.getCoherentImageChunks(contrastMask, rotateImage)
+
 if useVerticalSplitting:
-    chunks = prepasses.toVerticalChunks(chunks)
-    chunks = prepasses.splitConnectedChunks(chunks)
+    chunks = passes.toVerticalChunks(chunks)
+    chunks = passes.splitConnectedChunks(chunks)
 
-
+visualizeImageBase = image.rotate(90, expand=True) if rotateImage else image
 results = {}
 threads = [
     threading.Thread(
-        target=lambda: results.update({"chunksVis": prepasses.visualizeChunks(image, chunks)})
+        target=lambda: results.update({"chunksVis": passes.visualizeChunks(visualizeImageBase, chunks, rotateImage)})
     ),
     threading.Thread(
-        target=lambda: results.update({"sorted": prepasses.sort(image, chunks, sortMode, inverse)})
+        target=lambda: results.update({"sorted": passes.sort(image, chunks, sortMode, inverse, rotateImage)})
     )
 ]
 

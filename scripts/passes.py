@@ -1,6 +1,10 @@
+# passes.py
+
 from PIL import Image
 import converters, math, random, threading
 from tqdm import tqdm
+from collections import defaultdict
+
 
 def contrastMask(img: Image.Image, limLower, limUpper):
     out: Image.Image = Image.new("L", img.size)
@@ -16,13 +20,13 @@ def contrastMask(img: Image.Image, limLower, limUpper):
             if val > highest:
                 highest = val
             if limLower < val <= limUpper:
-                out.putpixel((x, y), 257)
+                out.putpixel((x, y), 255)
             else:
                 out.putpixel((x, y), 0)
     return out
 
 
-def luminanceMask(img: Image.Image):
+def luminanceMask(img: Image.Image) -> Image.Image:
     out: Image.Image = Image.new("RGB", img.size)
     for x in range(img.size[0]):
         for y in range(img.size[1]):
@@ -30,8 +34,10 @@ def luminanceMask(img: Image.Image):
             out.putpixel((x,y), (val, val, val))
     return out
 
-def getCoherentImageChunks(img: Image.Image):
+
+def getCoherentImageChunks(img: Image.Image, rotate=False) -> list[list[tuple[int, int]]]:
     img = img.convert("RGB")
+    if rotate: img = img.rotate(90, expand=True)
     width, height = img.size
     visited = [[False for _ in range(height)] for _ in range(width)]
     chunks = []
@@ -101,23 +107,24 @@ def splitConnectedChunks(vChunks: list[list[tuple[int, int]]]) -> list[list[tupl
 
     return out
 
-
-def visualizeChunks(img: Image.Image, chunks):
+def visualizeChunks(img: Image.Image, chunks, rotate=False):
     out = Image.new("RGB", img.size)
     for chunk in tqdm(chunks, desc="Visualizing chunks"):
         color = tuple(random.randint(0, 255) for _ in range(3))
         for x, y in chunk:
             out.putpixel((x, y), color)
+    if rotate: out = out.rotate(-90, expand=True)
     return out
 
-from PIL import Image
-import math
 
+def sort(img: Image.Image, chunks, mode="lum", flipDir=False, rotate=True):
+    if rotate:
+        img = img.rotate(90, expand=True)
 
+    out = img.copy()
+    lock = threading.Lock()
 
-def sort(img: Image.Image, chunks, mode="lum", flipDir=False):
-    out = img.copy()  # wichtig: sonst modifizierst du das Originalbild
-    lock = threading.Lock()  # um Schreibzugriffe aufs Bild zu synchronisieren
+    img_pixels = {(x, y): img.getpixel((x, y)) for x in range(img.width) for y in range(img.height)}
 
     def process_chunk(chunk):
         chunk_dict = {}
@@ -125,7 +132,7 @@ def sort(img: Image.Image, chunks, mode="lum", flipDir=False):
         for x, y in chunk:
             if x not in chunk_dict:
                 chunk_dict[x] = []
-            chunk_dict[x].append((y, img.getpixel((x, y))))
+            chunk_dict[x].append((y, img_pixels[(x, y)]))
 
         for x in chunk_dict:
             if not flipDir:
@@ -135,7 +142,6 @@ def sort(img: Image.Image, chunks, mode="lum", flipDir=False):
 
             target_ys = sorted([y for y, _ in chunk_dict[x]])
 
-            # Thread-safe Schreibzugriff auf das Bild
             with lock:
                 for i in range(len(target_ys)):
                     out.putpixel((x, target_ys[i]), sorted_pixels[i][1])
@@ -148,5 +154,8 @@ def sort(img: Image.Image, chunks, mode="lum", flipDir=False):
 
     for t in tqdm(threads, desc="Waiting for chunks to finish"):
         t.join()
+
+    if rotate:
+        out = out.rotate(-90, expand=True)
 
     return out
