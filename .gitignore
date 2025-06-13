@@ -5,3 +5,5 @@ __pycache__/
 *.pyo
 *.log
 .vscode/settings.json
+temp_input.png
+temp_preview_input.png

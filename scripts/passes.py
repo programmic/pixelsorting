@@ -117,7 +117,12 @@ def visualizeChunks(img: Image.Image, chunks, rotate=False):
     return out
 
 
-def sort(img: Image.Image, chunks, mode="lum", flipDir=False, rotate=True):
+def sort(img: Image.Image, 
+         chunks,
+         mode="lum",
+         flipDir=False,
+         rotate=True
+         ):
     if rotate:
         img = img.rotate(90, expand=True)
 
