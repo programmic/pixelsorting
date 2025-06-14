@@ -176,10 +176,18 @@ class GUI(QWidget):
         self.verticalSpacer1 = QSpacerItem(5, 15, QSizePolicy.Minimum)
         self.lToggles.addItem(self.verticalSpacer1)
 
+        self.qL = QHBoxLayout()
         self.exportPath = QFileDialog()
         self.selectExportPath = QPushButton("Select export directory")
         self.selectExportPath.clicked.connect(self.selectExportDir)
-        self.layout.addWidget(self.selectExportPath)
+        self.qL.addWidget(self.selectExportPath)
+
+        self.outputText = superqt.QElidingLabel()
+        self.outputText.setText("ehfiopuehiouhaioeughaoieghuoiaeughsi")
+        self.qL.addWidget(self.outputText)
+
+        self.layout.addLayout(self.qL)
+
 
         self.exportPathStr = f"C:/Users/{os.getlogin()}/Downloads"
         self.lCurDir = QLabel(f"Current Directory: {self.exportPathStr}")

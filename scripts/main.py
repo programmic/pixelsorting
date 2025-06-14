@@ -1,5 +1,4 @@
 from PIL import Image
-import threading
 import os
 from datetime import datetime
 from tqdm import tqdm
@@ -72,14 +71,37 @@ def process_image(
 
 if __name__ == "__main__":
     image = load_image_from_folder()
+
+    #img1 = passes.blurGaussian(image, 4)
+    #img2 = passes.blurGaussian(image, 8)
+    #
+    #differenceA = passes.subtractImages(img1, img2)
+    #differenceA.show()
+    #differenceB = passes.subtractImages(img2, img1)
+    #differenceB.show()
+#
+    #mask = passes.contrastMask(differenceB, 1, 3000)
+    #mask.show()
+
+
+    imgA = passes.blurGaussian1d(image, 1, num_processes=32)
+    imgB = passes.blurGaussian1d(image, 4, num_processes=32)
     
-    process_image(
-        image=image,
-        contrastLimLower=20,
-        contrastLimUpper=200,
-        sortMode="lum",
-        inverse=True,
-        useVerticalSplitting=True,
-        rotateImage=True,
-        exportPath=f"C:/Users/{os.getlogin()}/Downloads"
-    )
+    delta = passes.subtractImages(imgA, imgB)
+    delta = passes.adjustBrightness(delta, 5)
+    delta.show()
+
+    mask = passes.contrastMask(delta, 8, 500)
+    mask.show()
+
+
+    #process_image(
+    #    image=image,
+    #    contrastLimLower=20,
+    #    contrastLimUpper=200,
+    #    sortMode="lum",
+    #    inverse=True,
+    #    useVerticalSplitting=True,
+    #    rotateImage=True,
+    #    exportPath=f"C:/Users/{os.getlogin()}/Downloads"
+    #)
