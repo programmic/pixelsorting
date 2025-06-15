@@ -83,25 +83,16 @@ if __name__ == "__main__":
     #mask = passes.contrastMask(differenceB, 1, 3000)
     #mask.show()
 
+    print("image loaded, running filter")
+    kwh = passes.kuwahara(image, 16)
+    kwh.show()
 
-    imgA = passes.blurGaussian1d(image, 1, num_processes=32)
-    imgB = passes.blurGaussian1d(image, 4, num_processes=32)
-    
-    delta = passes.subtractImages(imgA, imgB)
-    delta = passes.adjustBrightness(delta, 5)
-    delta.show()
-
-    mask = passes.contrastMask(delta, 8, 500)
-    mask.show()
-
-
-    #process_image(
-    #    image=image,
-    #    contrastLimLower=20,
-    #    contrastLimUpper=200,
-    #    sortMode="lum",
-    #    inverse=True,
-    #    useVerticalSplitting=True,
-    #    rotateImage=True,
-    #    exportPath=f"C:/Users/{os.getlogin()}/Downloads"
-    #)
+    #imgA = passes.blurGaussian1d(image, 1, num_processes=32)
+    #imgB = passes.blurGaussian1d(image, 4, num_processes=32)
+    #
+    #delta = passes.subtractImages(imgA, imgB)
+    #delta = passes.adjustBrightness(delta, 2)
+    #delta.show()
+#
+    #mask = passes.contrastMask(delta, 8, 500)
+    #mask.show()

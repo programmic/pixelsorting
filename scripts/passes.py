@@ -1,7 +1,7 @@
 # passes.py
 
 from PIL import Image
-import converters, math, random, threading
+import converters, math, random, threading, os
 from tqdm import tqdm
 from collections import defaultdict
 import numpy as np
@@ -315,7 +315,6 @@ def blurGaussian1d(img: Image.Image, kernel: int, sigma: float = None, num_proce
     img = img.convert("RGB")
     img_array = np.array(img, dtype=np.float32)
     height = img_array.shape[0]
-    width = img_array.shape[1]
 
     # sigma automatisch bestimmen, falls nicht gesetzt
     if sigma is None:
@@ -384,28 +383,29 @@ def adjustBrightness(img: Image.Image, gamma: float) -> Image.Image:
     width, height = img.size
 
     for x in tqdm(range(width), desc="Adjusting image gamma"):
+        inv_gamma = 1.0 / gamma
         for y in range(height):
             pixel = img.getpixel((x, y))
             
             if isinstance(pixel, int):  # 'L' mode (grayscale)
-                v = min(int(pixel * gamma), 255)
+                v = min(int(pixel + (gamma * (255 - r))), 255),
                 out.putpixel((x, y), v)
 
             elif len(pixel) == 3:  # RGB
                 r, g, b = pixel
                 new_pixel = (
-                    min(int(r * gamma), 255),
-                    min(int(g * gamma), 255),
-                    min(int(b * gamma), 255)
+                    int((r / 255.0) ** inv_gamma * 255),
+                    int((g / 255.0) ** inv_gamma * 255),
+                    int((b / 255.0) ** inv_gamma * 255)
                 )
                 out.putpixel((x, y), new_pixel)
 
             elif len(pixel) == 4:  # RGBA
                 r, g, b, a = pixel
                 new_pixel = (
-                    min(int(r * gamma), 255),
-                    min(int(g * gamma), 255),
-                    min(int(b * gamma), 255),
+                    int((r / 255.0) ** inv_gamma * 255),
+                    int((g / 255.0) ** inv_gamma * 255),
+                    int((b / 255.0) ** inv_gamma * 255),
                     a  # alpha bleibt gleich
                 )
                 out.putpixel((x, y), new_pixel)
@@ -414,3 +414,148 @@ def adjustBrightness(img: Image.Image, gamma: float) -> Image.Image:
                 raise ValueError(f"Unsupported pixel format: {pixel}")
 
     return out
+
+
+def getStandartDeviation(p1, p2):
+    r1 ,g1, b1 = p1
+    r2, g2, b2 = p2
+    return abs(r1 - r2) + abs(g1 - g2) + abs(b1 - b2)
+
+def box_blur_np(arr, kernel):
+    """Fast box blur for 2D numpy arrays with padding."""
+    k = 2 * kernel + 1
+    # Cumulative sum over rows and columns
+    cumsum = np.cumsum(np.cumsum(arr, axis=0), axis=1)
+    # Pad cumsum to simplify indexing
+    cumsum = np.pad(cumsum, ((1, 0), (1, 0)), mode='constant', constant_values=0)
+    h, w = arr.shape
+    out = np.empty_like(arr)
+    for i in tqdm(range(h), desc="Converting image for kuwahara filter"):
+        for j in range(w):
+            y1 = i
+            x1 = j
+            y2 = min(i + k, h)
+            x2 = min(j + k, w)
+            y0 = max(i - kernel, 0)
+            x0 = max(j - kernel, 0)
+            out[i, j] = (
+                cumsum[y2, x2]
+                - cumsum[y2, x0]
+                - cumsum[y0, x2]
+                + cumsum[y0, x0]
+            ) / (k * k)
+    return out
+
+def process_rows(y_start, y_end, padded_gray, padded_img, kernel, height, width):
+    result = np.zeros((y_end - y_start, width, 3), dtype=np.float32)
+    half = kernel + 1
+
+    for y in range(y_start, y_end):
+        for x in range(width):
+            gray_window = padded_gray[y:y+2*kernel+1, x:x+2*kernel+1]
+            color_window = padded_img[y:y+2*kernel+1, x:x+2*kernel+1, :]
+
+            regions_gray = [
+                gray_window[:half, :half],
+                gray_window[:half, kernel:],
+                gray_window[kernel:, kernel:],
+                gray_window[kernel:, :half]
+            ]
+            regions_color = [
+                color_window[:half, :half, :],
+                color_window[:half, kernel:, :],
+                color_window[kernel:, kernel:, :],
+                color_window[kernel:, :half, :]
+            ]
+
+            variances = [np.var(r) for r in regions_gray]
+            idx = np.argmin(variances)
+            mean_color = np.mean(regions_color[idx], axis=(0, 1))
+            result[y - y_start, x] = mean_color
+
+    return result
+
+def kuwahara(img: Image.Image, kernel: int, num_threads: int = None) -> Image.Image:
+    if num_threads is None:
+        num_threads = os.cpu_count() or 4
+
+    img_np = np.array(img, dtype=np.float32)  # shape (H, W, 3)
+    height, width, _ = img_np.shape
+
+    img_gray = np.dot(img_np[..., :3], [0.299, 0.587, 0.114])
+    padded_gray = np.pad(img_gray, kernel, mode='reflect')
+    padded_img = np.pad(img_np, ((kernel, kernel), (kernel, kernel), (0, 0)), mode='reflect')
+
+    out = np.zeros_like(img_np)
+
+    # Zeilen in Blöcke aufteilen
+    chunk_size = height // num_threads
+    ranges = [(i*chunk_size, (i+1)*chunk_size if i < num_threads - 1 else height) for i in range(num_threads)]
+
+    print(f"Processing with {num_threads} threads...")
+
+    with ThreadPoolExecutor(max_workers=num_threads) as executor:
+        futures = [
+            executor.submit(process_rows, y_start, y_end, padded_gray, padded_img, kernel, height, width)
+            for y_start, y_end in ranges
+        ]
+
+        for i, future in enumerate(tqdm(futures, desc="Combining thread results")):
+            result_chunk = future.result()
+            out[ranges[i][0]:ranges[i][1]] = result_chunk
+
+    out = np.clip(out, 0, 255).astype(np.uint8)
+    return Image.fromarray(out)
+
+
+def kuwaharaGrays(img: Image.Image, kernel: int) -> Image.Image:
+    print("converting image...")
+    img_np = np.array(img.convert("L"), dtype=np.float32)
+    print("1/6")
+
+    imgBoxBlur = blurBox(img, kernel, num_threads=96)
+    print("2/6")
+
+    imgBoxBlurL = imgBoxBlur.convert("L")
+    print("3/6")
+
+    mM = np.array(imgBoxBlurL, dtype=np.float32)
+    print("4/6")
+    mP_squared = img_np * img_np
+    print("5/6")
+
+    num_rows, num_cols = img_np.shape
+    print("6/6")
+    
+
+    mV = box_blur_np(mP_squared, kernel) - mM * mM
+    mV = np.maximum(mV, 0)
+
+    mM = np.pad(mM, kernel, mode='reflect')
+    mV = np.pad(mV, kernel, mode='reflect')
+
+    mO = np.empty_like(img_np)
+
+    for ii in tqdm(range(num_rows), desc="Applying Kuwahara filter"):
+        for jj in range(num_cols):
+            rr = ii + kernel
+            cc = jj + kernel
+
+            variances = [
+                mV[rr - kernel, cc - kernel],  # Top-left
+                mV[rr - kernel, cc + kernel],  # Top-right
+                mV[rr + kernel, cc + kernel],  # Bottom-right
+                mV[rr + kernel, cc - kernel],  # Bottom-left
+            ]
+            std_arg = np.argmin(variances)
+
+            means = [
+                mM[rr - kernel, cc - kernel],  # Top-left
+                mM[rr - kernel, cc + kernel],  # Top-right
+                mM[rr + kernel, cc + kernel],  # Bottom-right
+                mM[rr + kernel, cc - kernel],  # Bottom-left
+            ]
+            mO[ii, jj] = means[std_arg]
+
+    mO = np.clip(mO, 0, 255).astype(np.uint8)
+    return Image.fromarray(mO)
