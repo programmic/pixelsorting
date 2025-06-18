@@ -72,20 +72,22 @@ def process_image(
 if __name__ == "__main__":
     image = load_image_from_folder()
 
-    #img1 = passes.blurGaussian(image, 4)
-    #img2 = passes.blurGaussian(image, 8)
-    #
-    #differenceA = passes.subtractImages(img1, img2)
-    #differenceA.show()
-    #differenceB = passes.subtractImages(img2, img1)
-    #differenceB.show()
-#
-    #mask = passes.contrastMask(differenceB, 1, 3000)
-    #mask.show()
+
+
+
 
     print("image loaded, running filter")
-    kwh = passes.kuwahara(image, 16)
+    kwh = passes.kuwaharaGPU(image, 8)
     kwh.show()
+    p = f"C:/Users/{os.getlogin()}/Downloads"
+
+    now = datetime.now().strftime("%H-%M-%S")
+    os.makedirs(p, exist_ok=True)
+    kwh.save(f"{p}/{now}.png")
+
+    
+
+
 
     #imgA = passes.blurGaussian1d(image, 1, num_processes=32)
     #imgB = passes.blurGaussian1d(image, 4, num_processes=32)

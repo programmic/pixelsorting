@@ -8,6 +8,23 @@ import numpy as np
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from timing import timing
 from math import exp, pi
+import pyopencl as cl
+import contextlib
+import sys
+
+
+@contextlib.contextmanager
+def suppress_output():
+    with open(os.devnull, 'w') as devnull:
+        old_stdout = sys.stdout
+        old_stderr = sys.stderr
+        sys.stdout = devnull
+        sys.stderr = devnull
+        try:
+            yield
+        finally:
+            sys.stdout = old_stdout
+            sys.stderr = old_stderr
 
 
 def contrastMask(img: Image.Image, limLower, limUpper):
@@ -215,6 +232,83 @@ def blurBox(img: Image.Image, kernel: int, num_threads: int = 64) -> Image.Image
         list(tqdm(executor.map(lambda args: process_rows(*args), ranges), total=len(ranges), desc="Applying threaded blur"))
 
     return output
+
+@timing
+def blurBoxGPU(img: Image.Image, kernel_radius: int) -> Image.Image:
+    # Bild in RGB konvertieren und zu NumPy-Array
+    img = img.convert("RGB")
+    img_np = np.array(img).astype(np.uint8)
+    height, width, channels = img_np.shape
+
+    # OpenCL Kontext & Queue
+    platforms = cl.get_platforms()
+    devices = platforms[0].get_devices(device_type=cl.device_type.GPU)
+    ctx = cl.Context(devices)
+    queue = cl.CommandQueue(ctx)
+
+    # OpenCL-Programm (Box Blur)
+    program_src = f"""
+    __kernel void box_blur(__global const uchar* input,
+                           __global uchar* output,
+                           const int width,
+                           const int height,
+                           const int channels,
+                           const int radius)
+    {{
+        int x = get_global_id(0);
+        int y = get_global_id(1);
+        
+        if (x >= width || y >= height)
+            return;
+
+        for (int c = 0; c < channels; c++) {{
+            int sum = 0;
+            int count = 0;
+
+            for (int ky = -radius; ky <= radius; ky++) {{
+                for (int kx = -radius; kx <= radius; kx++) {{
+                    int nx = clamp(x + kx, 0, width - 1);
+                    int ny = clamp(y + ky, 0, height - 1);
+                    int idx = (ny * width + nx) * channels + c;
+                    sum += input[idx];
+                    count++;
+                }}
+            }}
+
+            int out_idx = (y * width + x) * channels + c;
+            output[out_idx] = sum / count;
+        }}
+    }}
+    """
+    with suppress_output():
+        program = cl.Program(ctx, program_src).build()
+
+    # Eingabe & Ausgabe-Puffer
+    flat_input = img_np.flatten()
+    output_np = np.empty_like(flat_input)
+
+    mf = cl.mem_flags
+    input_buf = cl.Buffer(ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=flat_input)
+    output_buf = cl.Buffer(ctx, mf.WRITE_ONLY, output_np.nbytes)
+
+    # Kernel ausführen
+    kernel = program.box_blur
+    kernel.set_args(input_buf, output_buf,
+                    np.int32(width), np.int32(height),
+                    np.int32(channels), np.int32(kernel_radius))
+
+    global_size = (width, height)
+    cl.enqueue_nd_range_kernel(queue, kernel, global_size, None)
+    cl.enqueue_copy(queue, output_np, output_buf)
+    queue.finish()
+
+    # In Bild zurückverwandeln
+    output_img = output_np.reshape((height, width, channels))
+    return Image.fromarray(output_img, 'RGB')
+
+
+
+
 
 @timing
 def blurGaussian(img: Image.Image, kernel: int, sigma: float = 1.0, num_threads: int = 64) -> Image.Image:
@@ -506,6 +600,154 @@ def kuwahara(img: Image.Image, kernel: int, num_threads: int = None) -> Image.Im
 
     out = np.clip(out, 0, 255).astype(np.uint8)
     return Image.fromarray(out)
+
+def kuwaharaGPU(img: Image.Image, kernel_radius: int) -> Image.Image:
+    img = img.convert("RGB")
+    img_np = np.array(img).astype(np.float32)
+    height, width, channels = img_np.shape
+    window_size = kernel_radius + 1
+
+    flat_input = img_np.flatten()
+    output_np = np.empty_like(flat_input)
+
+    # OpenCL Setup
+    platforms = cl.get_platforms()
+    devices = platforms[0].get_devices(device_type=cl.device_type.GPU)
+    ctx = cl.Context(devices)
+    queue = cl.CommandQueue(ctx)
+
+    program_src = f"""
+    __kernel void kuwahara_filter(
+        __global const float* input,
+        __global float* output,
+        const int width,
+        const int height,
+        const int channels,
+        const int radius
+    ) {{
+        int x = get_global_id(0);
+        int y = get_global_id(1);
+
+        if (x >= width || y >= height)
+            return;
+
+        float mean[4][3] = {{0}};
+        float var[4] = {{0}};
+        int count[4] = {{0}};
+
+        for (int dx = -radius; dx <= 0; dx++) {{
+            for (int dy = -radius; dy <= 0; dy++) {{
+                int nx = clamp(x + dx, 0, width - 1);
+                int ny = clamp(y + dy, 0, height - 1);
+                int idx = (ny * width + nx) * channels;
+
+                for (int c = 0; c < channels; c++) {{
+                    float val = input[idx + c];
+                    mean[0][c] += val;
+                }}
+
+                float gray = 0.299f * input[idx] + 0.587f * input[idx + 1] + 0.114f * input[idx + 2];
+                var[0] += gray * gray;
+                count[0]++;
+            }}
+        }}
+
+        for (int dx = 0; dx <= radius; dx++) {{
+            for (int dy = -radius; dy <= 0; dy++) {{
+                int nx = clamp(x + dx, 0, width - 1);
+                int ny = clamp(y + dy, 0, height - 1);
+                int idx = (ny * width + nx) * channels;
+
+                for (int c = 0; c < channels; c++) {{
+                    mean[1][c] += input[idx + c];
+                }}
+
+                float gray = 0.299f * input[idx] + 0.587f * input[idx + 1] + 0.114f * input[idx + 2];
+                var[1] += gray * gray;
+                count[1]++;
+            }}
+        }}
+
+        for (int dx = -radius; dx <= 0; dx++) {{
+            for (int dy = 0; dy <= radius; dy++) {{
+                int nx = clamp(x + dx, 0, width - 1);
+                int ny = clamp(y + dy, 0, height - 1);
+                int idx = (ny * width + nx) * channels;
+
+                for (int c = 0; c < channels; c++) {{
+                    mean[2][c] += input[idx + c];
+                }}
+
+                float gray = 0.299f * input[idx] + 0.587f * input[idx + 1] + 0.114f * input[idx + 2];
+                var[2] += gray * gray;
+                count[2]++;
+            }}
+        }}
+
+        for (int dx = 0; dx <= radius; dx++) {{
+            for (int dy = 0; dy <= radius; dy++) {{
+                int nx = clamp(x + dx, 0, width - 1);
+                int ny = clamp(y + dy, 0, height - 1);
+                int idx = (ny * width + nx) * channels;
+
+                for (int c = 0; c < channels; c++) {{
+                    mean[3][c] += input[idx + c];
+                }}
+
+                float gray = 0.299f * input[idx] + 0.587f * input[idx + 1] + 0.114f * input[idx + 2];
+                var[3] += gray * gray;
+                count[3]++;
+            }}
+        }}
+
+        float min_var = MAXFLOAT;
+        int best = 0;
+
+        for (int i = 0; i < 4; i++) {{
+            float mean_gray = 0;
+            float gray_val;
+
+            if (count[i] > 0) {{
+                gray_val = var[i] / count[i];
+            }} else {{
+                gray_val = MAXFLOAT;
+            }}
+
+            if (gray_val < min_var) {{
+                min_var = gray_val;
+                best = i;
+            }}
+        }}
+
+        int out_idx = (y * width + x) * channels;
+
+        for (int c = 0; c < channels; c++) {{
+            output[out_idx + c] = mean[best][c] / count[best];
+        }}
+    }}
+    """
+
+    with suppress_output():
+        program = cl.Program(ctx, program_src).build()
+
+    mf = cl.mem_flags
+    input_buf = cl.Buffer(ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=flat_input)
+    output_buf = cl.Buffer(ctx, mf.WRITE_ONLY, output_np.nbytes)
+
+    kernel = program.kuwahara_filter
+    kernel.set_args(input_buf, output_buf,
+                    np.int32(width), np.int32(height),
+                    np.int32(channels), np.int32(kernel_radius))
+
+    global_size = (width, height)
+    cl.enqueue_nd_range_kernel(queue, kernel, global_size, None)
+    cl.enqueue_copy(queue, output_np, output_buf)
+    queue.finish()
+
+    output_img = output_np.reshape((height, width, channels))
+    output_img = np.clip(output_img, 0, 255).astype(np.uint8)
+    return Image.fromarray(output_img, 'RGB')
+
 
 
 def kuwaharaGrays(img: Image.Image, kernel: int) -> Image.Image:
