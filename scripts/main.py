@@ -14,6 +14,11 @@ def load_image_from_folder(folder: str = "assets/images/") -> Image.Image:
             return Image.open(image_path).convert("RGB")
     raise FileNotFoundError("Kein gültiges Bild im Ordner gefunden.")
 
+def store(img: Image.Image):
+    now = datetime.now().strftime("%Y.%m.%d-%H.%M.%S")
+    p = f"assets/printouts"
+    os.makedirs(p, exist_ok=True)
+    img.save(f"{p}/{now}.png")
 
 def process_image(
     image: Image.Image,
@@ -72,20 +77,21 @@ def process_image(
 if __name__ == "__main__":
     image = load_image_from_folder()
 
+    a = passes.cristallineExpansion(image, 7500)
+    a.show(); store(a)
 
+    b = passes.kuwaharaGPU(image, 16)
+    b.show(); store(b)
+
+    x = passes.mixScreen(a, b, "lum")
+    x.show(); store(x)
 
 
 
     print("image loaded, running filter")
-    kwh = passes.kuwaharaGPU(image, 8)
-    kwh.show()
-    p = f"C:/Users/{os.getlogin()}/Downloads"
-
-    now = datetime.now().strftime("%H-%M-%S")
-    os.makedirs(p, exist_ok=True)
-    kwh.save(f"{p}/{now}.png")
-
-    
+    #kwh = passes.kuwaharaGPU(image, 8)
+    #kwh.show()
+#
 
 
 

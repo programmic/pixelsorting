@@ -3,11 +3,12 @@
 from PIL import Image
 import converters, math, random, threading, os
 from tqdm import tqdm
-from collections import defaultdict
+from collections import defaultdict, deque
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from timing import timing
 from math import exp, pi
+from typing import List, Tuple
 import pyopencl as cl
 import contextlib
 import sys
@@ -25,7 +26,6 @@ def suppress_output():
         finally:
             sys.stdout = old_stdout
             sys.stderr = old_stderr
-
 
 def contrastMask(img: Image.Image, limLower, limUpper):
     out: Image.Image = Image.new("L", img.size)
@@ -46,7 +46,6 @@ def contrastMask(img: Image.Image, limLower, limUpper):
                 out.putpixel((x, y), 0)
     return out
 
-
 def luminanceMask(img: Image.Image) -> Image.Image:
     out: Image.Image = Image.new("RGB", img.size)
     for x in range(img.size[0]):
@@ -54,7 +53,6 @@ def luminanceMask(img: Image.Image) -> Image.Image:
             val = math.floor(converters.getLuminance(img.getpixel((x,y))))
             out.putpixel((x,y), (val, val, val))
     return out
-
 
 def getCoherentImageChunks(img: Image.Image, rotate=False) -> list[list[tuple[int, int]]]:
     img = img.convert("RGB")
@@ -136,7 +134,6 @@ def visualizeChunks(img: Image.Image, chunks, rotate=False):
             out.putpixel((x, y), color)
     if rotate: out = out.rotate(-90, expand=True)
     return out
-
 
 def sort(img: Image.Image, 
          chunks,
@@ -306,10 +303,6 @@ def blurBoxGPU(img: Image.Image, kernel_radius: int) -> Image.Image:
     output_img = output_np.reshape((height, width, channels))
     return Image.fromarray(output_img, 'RGB')
 
-
-
-
-
 @timing
 def blurGaussian(img: Image.Image, kernel: int, sigma: float = 1.0, num_threads: int = 64) -> Image.Image:
     img = img.convert("RGB")
@@ -362,16 +355,14 @@ def blurGaussian(img: Image.Image, kernel: int, sigma: float = 1.0, num_threads:
 
     return output
 
-
-def gaussian_kernel_1d(kernel_size: int, sigma: float) -> np.ndarray:
+def __gaussian_kernel_1d(kernel_size: int, sigma: float) -> np.ndarray:
     """Erzeuge eine 1D-Gaussian-Kernel."""
     radius = kernel_size // 2
     ax = np.arange(-radius, radius + 1)
     kernel = np.exp(-(ax**2) / (2. * sigma**2))
     return kernel / np.sum(kernel)
 
-
-def convolve_separable(img_array: np.ndarray, kernel: np.ndarray) -> np.ndarray:
+def __convolve_separable(img_array: np.ndarray, kernel: np.ndarray) -> np.ndarray:
     pad_width = len(kernel) // 2
     padded = np.pad(img_array, ((pad_width, pad_width), (pad_width, pad_width), (0, 0)), mode='reflect')
 
@@ -398,14 +389,12 @@ def convolve_separable(img_array: np.ndarray, kernel: np.ndarray) -> np.ndarray:
     cropped = output[pad_width:-pad_width, pad_width:-pad_width, :]
     return cropped
 
-
-def process_chunk(sub_img: np.ndarray, kernel: np.ndarray) -> np.ndarray:
+def __process_chunk(sub_img: np.ndarray, kernel: np.ndarray) -> np.ndarray:
     """Blurt ein gepaddetes Chunk und entfernt die Padding-Ränder."""
-    blurred = convolve_separable(sub_img, kernel)
+    blurred = __convolve_separable(sub_img, kernel)
     return blurred
 
-
-def blurGaussian1d(img: Image.Image, kernel: int, sigma: float = None, num_processes: int = 4) -> Image.Image:
+def __blurGaussian1d(img: Image.Image, kernel: int, sigma: float = None, num_processes: int = 4) -> Image.Image:
     img = img.convert("RGB")
     img_array = np.array(img, dtype=np.float32)
     height = img_array.shape[0]
@@ -415,7 +404,7 @@ def blurGaussian1d(img: Image.Image, kernel: int, sigma: float = None, num_proce
         sigma = kernel / 2.0
 
     kernel_size = 2 * kernel + 1
-    g_kernel = gaussian_kernel_1d(kernel_size, sigma)
+    g_kernel = __gaussian_kernel_1d(kernel_size, sigma)
     pad = kernel  # top & bottom padding
 
     # Chunks vorbereiten mit Padding
@@ -434,7 +423,7 @@ def blurGaussian1d(img: Image.Image, kernel: int, sigma: float = None, num_proce
 
     results = []
     with ProcessPoolExecutor(max_workers=num_processes) as executor:
-        futures = [executor.submit(process_chunk, chunk, g_kernel) for chunk, g_kernel in chunks]
+        futures = [executor.submit(__process_chunk, chunk, g_kernel) for chunk, g_kernel in chunks]
         for f in tqdm(futures, desc="Applying Gaussian Blur"):
             results.append(f.result())
 
@@ -452,8 +441,6 @@ def blurGaussian1d(img: Image.Image, kernel: int, sigma: float = None, num_proce
     combined = np.vstack(final_array).clip(0, 255).astype(np.uint8)
     return Image.fromarray(combined)
 
-
-@timing
 def subtractImages(i1: Image.Image, i2: Image.Image):
     if i1.size != i2.size:
         raise ValueError("Images must be the same size")
@@ -509,13 +496,12 @@ def adjustBrightness(img: Image.Image, gamma: float) -> Image.Image:
 
     return out
 
-
-def getStandartDeviation(p1, p2):
+def __getStandartDeviation(p1, p2):
     r1 ,g1, b1 = p1
     r2, g2, b2 = p2
     return abs(r1 - r2) + abs(g1 - g2) + abs(b1 - b2)
 
-def box_blur_np(arr, kernel):
+def __box_blur_np(arr, kernel):
     """Fast box blur for 2D numpy arrays with padding."""
     k = 2 * kernel + 1
     # Cumulative sum over rows and columns
@@ -540,7 +526,7 @@ def box_blur_np(arr, kernel):
             ) / (k * k)
     return out
 
-def process_rows(y_start, y_end, padded_gray, padded_img, kernel, height, width):
+def __process_rows(y_start, y_end, padded_gray, padded_img, kernel, height, width):
     result = np.zeros((y_end - y_start, width, 3), dtype=np.float32)
     half = kernel + 1
 
@@ -590,7 +576,7 @@ def kuwahara(img: Image.Image, kernel: int, num_threads: int = None) -> Image.Im
 
     with ThreadPoolExecutor(max_workers=num_threads) as executor:
         futures = [
-            executor.submit(process_rows, y_start, y_end, padded_gray, padded_img, kernel, height, width)
+            executor.submit(__process_rows, y_start, y_end, padded_gray, padded_img, kernel, height, width)
             for y_start, y_end in ranges
         ]
 
@@ -748,8 +734,6 @@ def kuwaharaGPU(img: Image.Image, kernel_radius: int) -> Image.Image:
     output_img = np.clip(output_img, 0, 255).astype(np.uint8)
     return Image.fromarray(output_img, 'RGB')
 
-
-
 def kuwaharaGrays(img: Image.Image, kernel: int) -> Image.Image:
     print("converting image...")
     img_np = np.array(img.convert("L"), dtype=np.float32)
@@ -770,7 +754,7 @@ def kuwaharaGrays(img: Image.Image, kernel: int) -> Image.Image:
     print("6/6")
     
 
-    mV = box_blur_np(mP_squared, kernel) - mM * mM
+    mV = __box_blur_np(mP_squared, kernel) - mM * mM
     mV = np.maximum(mV, 0)
 
     mM = np.pad(mM, kernel, mode='reflect')
@@ -801,3 +785,70 @@ def kuwaharaGrays(img: Image.Image, kernel: int) -> Image.Image:
 
     mO = np.clip(mO, 0, 255).astype(np.uint8)
     return Image.fromarray(mO)
+
+def cristallineExpansion(img: Image.Image, c: int) -> Image.Image:
+    maxX, maxY = img.size
+    out = Image.new("RGB", (maxX, maxY))
+
+    if c <= 0:
+        raise ValueError("Sample count must be positive")
+    elif c >= maxX * maxY:
+        print("Warning: Sample count is too high")
+        c = int(maxX * maxY / 5000)
+        print("Set new sample count:", c)
+
+    all_coords = [(x, y) for x in tqdm(range(maxX), desc="Generating Seeds") for y in range(maxY)]
+    points = random.sample(all_coords, c)
+
+    field = -1 * np.ones((maxY, maxX), dtype=np.int32)
+    colors = []
+
+    growth = deque()
+
+    for i, (x, y) in enumerate(points):
+        field[y, x] = i
+        growth.append((x, y, i))  # x, y, crystal-id
+        colors.append(img.getpixel((x, y)))  
+
+    directions = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+    out_pixels = out.load()
+
+    for (x, y), color in zip(points, colors):
+        out_pixels[x, y] = color
+
+    print("  Growing crystals: Step 0",end="\r")
+    count = 0
+    while growth:
+        x, y, cid = growth.popleft()
+
+        for dx, dy in directions:
+            nx, ny = x + dx, y + dy
+            if 0 <= nx < maxX and 0 <= ny < maxY and field[ny, nx] == -1:
+                field[ny, nx] = cid
+                growth.append((nx, ny, cid))
+                out_pixels[nx, ny] = colors[cid]
+        if count % 10000 == 0:
+            print("  Growing Crystals: Step", count, end="\r")
+        count += 1
+
+    return out
+
+def mixScreen(a:Image.Image, b: Image.Image, mode="lum"):
+    if a.size != b.size:
+        raise ValueError("Error: Images must be same size")
+    
+    out = Image.new("RGB", a.size)
+    for x in tqdm(range(a.size[0]), desc="Mixing images"):
+        for y in range(a.size[1]):
+            pixelA = a.getpixel((x,y))
+            pixelB = b.getpixel((x,y))
+            valueA = converters.convert(pixelA, mode)
+            valueB = converters.convert(pixelB, mode)
+
+            if valueA > valueB:
+                out.putpixel((x,y), pixelA)
+            elif valueA < valueB:
+                out.putpixel((x,y), pixelB)
+            else:
+                out.putpixel((x,y), pixelA)
+    return out
