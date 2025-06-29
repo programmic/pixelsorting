@@ -1,8 +1,8 @@
 from PySide6.QtWidgets import *
 from PySide6.QtCore import Qt
 
-from guiElements.maskWidget import *
-from guiElements.renderPassSettingsWidget import *
+from .maskWidget import *
+from .renderPassSettingsWidget import *
 
 class RenderPassWidget(QWidget):
     """
@@ -27,8 +27,8 @@ class RenderPassWidget(QWidget):
         self.selected_inputs = [None] * self.num_inputs
         self.selected_output = None
 
-        self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(4, 4, 4, 4)
+        self.main_layout = QVBoxLayout(self)
+        self.main_layout.setContentsMargins(4, 4, 4, 4)
 
         # Create title bar with drag handle and delete button
         top = QHBoxLayout()
@@ -46,7 +46,7 @@ class RenderPassWidget(QWidget):
         self.delete_btn.setFixedWidth(30)
         self.delete_btn.clicked.connect(self._delete_self)
         top.addWidget(self.delete_btn)
-        self.layout.addLayout(top)
+        self.main_layout.addLayout(top)
 
         # Input/output section
         self.io_layout = QHBoxLayout()
@@ -76,16 +76,16 @@ class RenderPassWidget(QWidget):
         self.output_label.mousePressEvent = self._on_output_click
         self.io_layout.addWidget(self.output_label)
         
-        self.layout.addLayout(self.io_layout)
+        self.main_layout.addLayout(self.io_layout)
 
         # Settings configuration
         settings_config = self.get_settings_config(renderpass_type)
         self.settings_widget = RenderPassSettingsWidget(settings_config)
-        self.layout.addWidget(self.settings_widget)
+        self.main_layout.addWidget(self.settings_widget)
 
         # Mask widget
         self.mask_widget = MaskWidget(available_slots, self.start_slot_selection)
-        self.layout.addWidget(self.mask_widget)
+        self.main_layout.addWidget(self.mask_widget)
 
         self.selection_mode = None
         self.current_selected_input = None
@@ -95,9 +95,9 @@ class RenderPassWidget(QWidget):
         for child in self.findChildren(QWidget):
             child.setParent(None)
             child.deleteLater()
-        if self.layout() is not None:
-            while self.layout().count():
-                item = self.layout().takeAt(0)
+        if self.main_layout is not None:
+            while self.main_layout.count():
+                item = self.main_layout.takeAt(0)
                 if item.widget():
                     item.widget().setParent(None)
                     item.widget().deleteLater()
@@ -161,13 +161,113 @@ class RenderPassWidget(QWidget):
         """
         Retrieve current settings from the settings widget.
         """
-        settings = self.settings_widget.get_settings()
+        settings = self.settings_widget.get_values()
         return settings
 
     def get_settings_config(self, renderpass_type):
         # This method should return settings configuration per pass type
-        # For demo, returns a dummy dictionary
-        return {"enabled": True, "slot": "slot1"}
+        # Updated to return a list of dicts as expected by RenderPassSettingsWidget
+        if  renderpass_type == "Mix By Percent":
+            return [
+                {
+                    "label": "Mix Factor",
+                    "type": "slider",
+                    "min": 0.0,
+                    "max": 100.0,
+                    "default": 50.0
+                },
+            ]
+        elif renderpass_type == "Blur":
+            return [
+                {
+                    "label": "Blur Type",
+                    "type": "radio",
+                    "options": ['Box', 'Gaussian'],
+                    "default": "Box"
+                },
+                {
+                    "label": "Blur Kernel",
+                    "type": "slider",
+                    "min": 1.0,
+                    "max": 64.0,
+                    "default": 8.0,
+                    "integer": True
+                },
+            ]
+        elif renderpass_type == "Invert":
+            return [
+                {
+                    "label": "Invert type",
+                    "type": "radio",
+                    "options": ['Luminance', 'R', 'G', 'B', 'RG', 'GB', 'RB'],
+                    "default": "Luminance"
+                },
+                {
+                    "label": "Impact Factor",
+                    "type": "slider",
+                    "min": 0.0,
+                    "max": 100.0,
+                    "default": 100.0
+                },
+            ]
+        elif renderpass_type == "Simple Kuwahara":
+            return [
+                {
+                    "label": "Kernel",
+                    "type": "slider",
+                    "min": 2.0,
+                    "max": 64.0,
+                    "default": 8.0
+                },
+            ]
+        elif renderpass_type == "PixelSort":
+            return [
+                {
+                    "label": "Use vSplitting",
+                    "type": "switch",
+                    "default": True
+                },
+                {
+                    "label": "Sort mode",
+                    "type": "dropdown",
+                    "options": ['Lum', 'HUE', 'R', 'G', 'B'],
+                    "default": "Lum"
+                },
+                {
+                    "label": "Flip Horizontally",
+                    "type": "switch",
+                    "default": False
+                },
+                {
+                    "label": "Flip Vertically",
+                    "type": "switch",
+                    "default": False
+                },
+                {
+                    "label": "Rotate",
+                    "type": "radio",
+                    "options": ['-90', '0', '90', '180'],
+                    "default": "0"
+                },
+            ]
+        elif renderpass_type == "Mix Screen":
+            return [
+            ]
+        elif renderpass_type == "Cristalline Growth":
+            return [
+                {
+                    "label": "Cluster Seeds (%)",
+                    "type": "slider",
+                    "min": 1.0,
+                    "max": 100.0,
+                    "default": 30.0
+                },
+            ]
+        else:
+            # Default fallback settings
+            return [
+                {"label": "Enabled", "type": "switch", "default": True},
+            ]
     
     def start_slot_selection(self, mode):
         self.selection_mode = mode

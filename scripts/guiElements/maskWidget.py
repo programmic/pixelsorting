@@ -32,7 +32,7 @@ class MaskWidget(QWidget):
         self.layout.addStretch()
         
     def _on_select_clicked(self):
-        self.on_select_slot('mask', self)
+        self.on_select_slot('mask')
         
     def set_slot(self, slot_name: str):
         self.selected_slot = slot_name
