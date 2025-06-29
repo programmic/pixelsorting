@@ -1,9 +1,10 @@
+# masterGUI.py
 import sys
 from PySide6.QtWidgets import *
 from PySide6.QtCore import Qt
 from PySide6.QtCore import Signal
-from PySide6.QtGui import QColor
-from superqt import QSearchableListWidget
+from superqt import QDoubleSlider, QToggleSwitch
+
 
 class SlotTableWidget(QWidget):
     slot_clicked = Signal(str)
@@ -51,6 +52,98 @@ class SlotTableWidget(QWidget):
                 else:
                     btn.setStyleSheet("background-color: #e57373; border-radius: 3px;")  # rot leer
                 btn.setEnabled(True)
+
+class RenderPassSettingsWidget(QWidget):
+    def __init__(self, settings_config: list[dict], parent=None):
+        super().__init__(parent)
+        self.layout = QVBoxLayout(self)
+        self.controls = {}
+
+        for setting in settings_config:
+            w = None
+            label_text = setting.get("label", "")
+            if label_text:
+                label = QLabel(label_text)
+                self.layout.addWidget(label)
+
+            t = setting.get("type")
+
+            if t == "radio":
+                options = setting.get("options", [])
+                w = QWidget()
+                h_layout = QHBoxLayout(w)
+                button_group = QButtonGroup(self)
+                for option in options:
+                    rb = QRadioButton(option)
+                    h_layout.addWidget(rb)
+                    button_group.addButton(rb)
+                    if option == setting.get("default"):
+                        rb.setChecked(True)
+                self.controls[label_text] = button_group
+                self.layout.addWidget(w)
+
+            elif t == "switch":
+                w = QCheckBox(label_text)
+                w.setChecked(setting.get("default", False))
+                self.controls[label_text] = w
+                self.layout.addWidget(w)
+
+            elif t == "slider":
+                w = QSlider(Qt.Horizontal)
+                w.setMinimum(setting.get("min", 0))
+                w.setMaximum(setting.get("max", 100))
+                w.setValue(setting.get("default", 0))
+                self.controls[label_text] = w
+                self.layout.addWidget(w)
+
+            elif t == "multislider":
+                w = QDoubleSlider(Qt.Horizontal)
+                w.setMinimum(setting.get("min", 0.0))
+                w.setMaximum(setting.get("max", 1.0))
+                default = setting.get("default", (0.0, 1.0))
+                if isinstance(default, (list, tuple)) and len(default) == 2:
+                    w.setValue(*default)
+                self.controls[label_text] = w
+                self.layout.addWidget(w)
+
+            else:
+                w = QLabel(f"Unknown setting type: {t}")
+                self.layout.addWidget(w)
+
+    def get_values(self):
+        result = {}
+        for label, control in self.controls.items():
+            if isinstance(control, QButtonGroup):
+                checked = control.checkedButton()
+                if checked:
+                    result[label] = checked.text()
+                else:
+                    result[label] = None
+            elif isinstance(control, QToggleSwitch):
+                result[label] = control.isChecked()
+            elif isinstance(control, QSlider):
+                result[label] = control.value()
+            elif isinstance(control, QDoubleSlider):
+                result[label] = control.value()
+            else:
+                result[label] = None
+        return result
+
+    def set_values(self, values: dict):
+        for label, val in values.items():
+            control = self.controls.get(label)
+            if control is None:
+                continue
+            if isinstance(control, QButtonGroup):
+                for btn in control.buttons():
+                    btn.setChecked(btn.text() == val)
+            elif isinstance(control, QToggleSwitch):
+                control.setChecked(bool(val))
+            elif isinstance(control, QSlider):
+                control.setValue(int(val))
+            elif isinstance(control, QDoubleSlider):
+                if isinstance(val, (list, tuple)) and len(val) == 2:
+                    control.setValue(*val)
 
 class RenderPassDefinition:
     def __init__(self, name: str, settings: dict):
@@ -101,20 +194,20 @@ class RenderPassWidget(QWidget):
         self.io_layout.addWidget(self.output_label)
         self.layout.addLayout(self.io_layout)
 
-        # Settings Platzhalter (einfach Label hier)
-        self.settings_widget = QLabel(f"[Settings für {renderpass_type}]")
-        self.settings_widget.setStyleSheet("font-style: italic; color: gray;")
+        # Ersetze bisherigen Settings-Label durch neues Settings Widget
+        settings_config = self.get_settings_config(renderpass_type)
+        self.settings_widget = RenderPassSettingsWidget(settings_config)
         self.layout.addWidget(self.settings_widget)
 
         self.selection_mode = None
 
-    def _on_input_click(self, event):
+    def _on_input_click(self, _):
         self.selection_mode = 'input'
         self.input_label.setStyleSheet("background-color: #a0c4ff; padding: 4px; border-radius: 4px;")
         self.output_label.setStyleSheet("background-color: lightgray; padding: 4px; border-radius: 4px;")
         self.on_select_slot('input', self)
 
-    def _on_output_click(self, event):
+    def _on_output_click(self, _):
         self.selection_mode = 'output'
         self.output_label.setStyleSheet("background-color: #a0c4ff; padding: 4px; border-radius: 4px;")
         self.input_label.setStyleSheet("background-color: lightgray; padding: 4px; border-radius: 4px;")
@@ -133,221 +226,75 @@ class RenderPassWidget(QWidget):
         self.input_label.setStyleSheet("background-color: lightgray; padding: 4px; border-radius: 4px;")
         self.output_label.setStyleSheet("background-color: lightgray; padding: 4px; border-radius: 4px;")
 
-    def _delete_self(self):
-        parent = self.parent()
-        while parent and not isinstance(parent, QListWidget):
-            parent = parent.parent()
-        if parent:
-            lw = parent
-            for i in range(lw.count()):
-                if lw.itemWidget(lw.item(i)) is self:
-                    lw.takeItem(i)
-                    break
-
-
-    def _build_settings_ui(self, pass_type):
-        settings = QWidget()
-        layout = QFormLayout(settings)
-
-        if pass_type == "Blur":
-            self.radius_slider = QSlider(Qt.Horizontal)
-            self.radius_slider.setMinimum(1)
-            self.radius_slider.setMaximum(50)
-            self.radius_slider.setValue(10)
-            layout.addRow("Radius:", self.radius_slider)
-
-        elif pass_type == "Threshold":
-            self.threshold_slider = QSlider(Qt.Horizontal)
-            self.threshold_slider.setRange(0, 255)
-            self.threshold_slider.setValue(128)
-            layout.addRow("Threshold:", self.threshold_slider)
-
-        elif pass_type == "ColorOverlay":
-            self.color_picker = QPushButton("Farbe wählen")
-            self.color_picker.clicked.connect(self.pick_color)
-            self.selected_color = QColor(255, 0, 0)
-            layout.addRow("Farbe:", self.color_picker)
-
+    def get_settings_config(self, renderpass_type):
+        # Definiere hier die Settings-Konfigurationen je Renderpass-Typ
+        if renderpass_type == "blur":
+            return [
+                {"label": "Blur Type", "type": "radio", "options": ["Gaussian", "Box", "Median"], "default": "Gaussian"},
+                {"label": "Radius", "type": "slider", "min": 1, "max": 20, "default": 5},
+                {"label": "Enabled", "type": "switch", "default": True},
+            ]
+        elif renderpass_type == "tone mapping":
+            return [
+                {"label": "Method", "type": "radio", "options": ["Reinhard", "ACES", "Filmic"], "default": "Reinhard"},
+                {"label": "Exposure", "type": "slider", "min": 0, "max": 10, "default": 1},
+                {"label": "Enabled", "type": "switch", "default": True},
+            ]
         else:
-            layout.addRow(QLabel("Keine Einstellungen verfügbar"))
-
-        return settings
-
-    def pick_color(self):
-        color = QColorDialog.getColor()
-        if color.isValid():
-            self.selected_color = color
-            self.color_picker.setStyleSheet(f"background-color: {color.name()};")
-            self.selected_color = color
+            # Default, falls Typ unbekannt
+            return [
+                {"label": "Enabled", "type": "switch", "default": True},
+            ]
 
     def get_settings(self):
-        data = {
-            "type": self.renderpass_type,
-            "input_slot": self.input_slot.currentText(),
-            "output_slot": self.output_slot.currentText()
-        }
-        if self.renderpass_type == "Blur":
-            data["radius"] = self.radius_slider.value()
-        elif self.renderpass_type == "Threshold":
-            data["threshold"] = self.threshold_slider.value()
-        elif self.renderpass_type == "ColorOverlay":
-            data["color"] = self.selected_color.name()
-        return data
+        # Nutze das Settings Widget, um Werte auszulesen
+        return self.settings_widget.get_values()
 
     def _delete_self(self):
-        list_widget = self.parentWidget().parentWidget().list_widget
-        for i in range(list_widget.count()):
-            item = list_widget.item(i)
-            if list_widget.itemWidget(item) == self:
-                list_widget.takeItem(i)
-                break
+        self.setParent(None)
+        self.deleteLater()
 
-class SearchableReorderableListWidget(QSearchableListWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-
-        lw = self.list_widget  # Das interne QListWidget
-        lw.setDragEnabled(True)
-        lw.setAcceptDrops(True)
-        lw.setDragDropMode(QListWidget.InternalMove)
-        lw.setDefaultDropAction(Qt.MoveAction)
-
-class CustomElementWidget(QWidget):
-    def __init__(self, element_type: str):
-        super().__init__()
-        self.element_type = element_type
-        self.layout = QHBoxLayout(self)
-
-        # Drag-Handle
-        #self.drag_bar = QLabel("☰")
-        self.drag_bar = QLabel("=")
-        self.drag_bar.setFixedWidth(20)
-        self.drag_bar.setAlignment(Qt.AlignCenter)
-        self.drag_bar.setStyleSheet("color: gray; font-size: 16px;")
-
-        # Dynamisches Element
-        if element_type == "Text":
-            self.widget = QLineEdit("Ein Text")
-        elif element_type == "Button":
-            self.widget = QPushButton("Ein Button")
-        elif element_type == "Checkbox":
-            self.widget = QCheckBox("Eine Checkbox")
-        else:
-            self.widget = QLineEdit("Unbekannt")
-
-        # Löschen-Button
-        self.delete_btn = QPushButton("✖")
-        self.delete_btn.setFixedWidth(30)
-        self.delete_btn.setStyleSheet("color: red;")
-
-        self.delete_btn.clicked.connect(self._delete_self)
-
-        # Layout-Zusammenbau
-        self.layout.addWidget(self.drag_bar)
-        self.layout.addWidget(self.widget)
-        self.layout.addWidget(self.delete_btn)
-        self.layout.setContentsMargins(2, 2, 2, 2)
-        self.layout.setSpacing(6)
-
-    def _delete_self(self):
-        # Find and remove the corresponding QListWidgetItem from the parent QListWidget
-        parent = self.parent()
-        while parent and not isinstance(parent, QListWidget):
-            parent = parent.parent()
-        if parent:
-            for i in range(parent.count()):
-                if parent.itemWidget(parent.item(i)) is self:
-                    parent.takeItem(i)
-                    break
-
-class GUI(QWidget):
+class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Renderpass GUI mit Slots (kleine Quadrate oben)")
 
-        self.available_slots = [f"slot{i}" for i in range(16)]
-        self.slot_usage = {}
+        self.setWindowTitle("Render Pass Manager")
 
-        main_layout = QHBoxLayout(self)
+        self.central_widget = QWidget()
+        self.setCentralWidget(self.central_widget)
+        self.layout = QVBoxLayout(self.central_widget)
 
-        # Links + Mitte als vertikaler Split (Slots oben, Renderpass-Liste unten)
-        left_center = QVBoxLayout()
+        self.renderpasses_container = QVBoxLayout()
+        self.layout.addLayout(self.renderpasses_container)
 
-        # Oben: Slot-Visualisierung (klein)
-        self.slot_table = SlotTableWidget(self.available_slots)
-        left_center.addWidget(self.slot_table)
+        self.available_slots = [f"slot{i}" for i in range(8)]
 
-        # Darunter: Renderpass-Liste
-        self.list_widget = SearchableReorderableListWidget()
-        left_center.addWidget(self.list_widget, stretch=1)
+        self.add_pass_btn = QPushButton("Add Render Pass")
+        self.add_pass_btn.clicked.connect(self.add_renderpass)
+        self.layout.addWidget(self.add_pass_btn)
 
-        main_layout.addLayout(left_center, stretch=1)
-
-        # Rechts: Liste zum schnellen Hinzufügen von Renderpasses
-        self.pass_list = QListWidget()
-        self.pass_list.addItems(["Blur", "Threshold", "ColorOverlay", "Invert", "Sharpen"])
-        self.pass_list.setFixedWidth(150)
-        main_layout.addWidget(self.pass_list)
-
-        self.pass_list.itemClicked.connect(self.on_pass_selected)
-
-        # Auswahlmodus für Slots
         self.current_selection_mode = None
         self.current_renderpass_widget = None
 
-        # Slot-Klicks auswerten
-        self.slot_table.slot_clicked.connect(self.on_slot_clicked)
+    def add_renderpass(self):
+        # Füge Beispiel-Renderpass vom Typ "blur" hinzu, später Auswahl möglich
+        rp = RenderPassWidget("blur", self.available_slots, self.select_slot_for_renderpass)
+        self.renderpasses_container.addWidget(rp)
 
-        self.update_slot_usage()
-
-    def on_pass_selected(self, item):
-        renderpass_type = item.text()
-        widget = RenderPassWidget(renderpass_type, self.available_slots, self.start_slot_selection)
-        lw = self.list_widget.list_widget
-        item = QListWidgetItem()
-        item.setSizeHint(widget.sizeHint())
-        lw.addItem(item)
-        lw.setItemWidget(item, widget)
-
-    def start_slot_selection(self, mode, widget):
+    def select_slot_for_renderpass(self, mode, renderpass_widget):
         self.current_selection_mode = mode
-        self.current_renderpass_widget = widget
-
-    def on_slot_clicked(self, slot_name):
-        if not self.current_renderpass_widget or not self.current_selection_mode:
-            return
-
-        # Slot0 darf nur als Input gewählt werden, nicht als Output
-        if slot_name == "slot0" and self.current_selection_mode == 'output':
-            # Ignorieren und evtl. Hinweis setzen (optional)
-            QMessageBox.information(self, "Ungültige Auswahl",
-                                    "Slot 0 (Original) kann nicht als Output verwendet werden.")
-            return
-
-        # Gültige Auswahl
-        self.current_renderpass_widget.set_slot(slot_name)
-        self.update_slot_usage()
+        self.current_renderpass_widget = renderpass_widget
+        # Hier könnte ein Slot-Auswahl-Dialog erscheinen, wir nehmen hier einfach den ersten Slot zum Test
+        # Um es dynamisch zu machen, kann man QSearchableListWidget oder ähnliches öffnen
+        # Für Demo wählen wir nur "slot1"
+        # In echt möchtest du evtl. ein Popup mit Liste der slots anzeigen
+        slot_name = "slot1"
+        renderpass_widget.set_slot(slot_name)
         self.current_selection_mode = None
         self.current_renderpass_widget = None
 
-    def update_slot_usage(self):
-        self.slot_usage = {slot: False for slot in self.available_slots}
-        lw = self.list_widget.list_widget
-        for i in range(lw.count()):
-            widget = lw.itemWidget(lw.item(i))
-            if widget.selected_output in self.slot_usage:
-                self.slot_usage[widget.selected_output] = True
-
-        # Slot0 (original) ist immer belegt
-        self.slot_usage["slot0"] = True
-
-        self.slot_table.refresh_colors(self.slot_usage)
-
-        
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     app = QApplication(sys.argv)
-    window = GUI()
-    window.resize(600,800)
-    window.show()
+    w = MainWindow()
+    w.show()
     sys.exit(app.exec())

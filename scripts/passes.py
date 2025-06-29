@@ -833,22 +833,21 @@ def cristallineExpansion(img: Image.Image, c: int) -> Image.Image:
 
     return out
 
-def mixScreen(a:Image.Image, b: Image.Image, mode="lum"):
+def mixPercent(a:Image.Image, b: Image.Image, p: int):
     if a.size != b.size:
         raise ValueError("Error: Images must be same size")
+    if not ( 0 < p <= 100 ):
+        raise ValueError("Error Percent alue may not be outside 0 < p <= 100")
     
     out = Image.new("RGB", a.size)
     for x in tqdm(range(a.size[0]), desc="Mixing images"):
         for y in range(a.size[1]):
             pixelA = a.getpixel((x,y))
             pixelB = b.getpixel((x,y))
-            valueA = converters.convert(pixelA, mode)
-            valueB = converters.convert(pixelB, mode)
 
-            if valueA > valueB:
-                out.putpixel((x,y), pixelA)
-            elif valueA < valueB:
-                out.putpixel((x,y), pixelB)
-            else:
-                out.putpixel((x,y), pixelA)
+            vR = max(0, min(int((pixelA[0] * (100-p) + pixelB[0] * p) / 100), 255))
+            vG = max(0, min(int((pixelA[1] * (100-p) + pixelB[1] * p) / 100), 255))
+            vB = max(0, min(int((pixelA[2] * (100-p) + pixelB[2] * p) / 100), 255))
+
+            out.putpixel((x,y), (vR,vG,vB))
     return out

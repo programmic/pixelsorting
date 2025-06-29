@@ -77,13 +77,13 @@ def process_image(
 if __name__ == "__main__":
     image = load_image_from_folder()
 
-    a = passes.cristallineExpansion(image, 7500)
-    a.show(); store(a)
+    #a = passes.cristallineExpansion(image, 7500)
+    #a.show(); store(a)
 
-    b = passes.kuwaharaGPU(image, 16)
+    b = passes.kuwaharaGPU(image, 64)
     b.show(); store(b)
 
-    x = passes.mixScreen(a, b, "lum")
+    x = passes.mixPercent(b, image, 20)
     x.show(); store(x)
 
 
