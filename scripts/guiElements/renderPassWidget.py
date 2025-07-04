@@ -210,10 +210,10 @@ class RenderPassWidget(QWidget):
                     "default": 100.0
                 },
             ]
-        elif renderpass_type == "Simple Kuwahara":
+        elif renderpass_type == "kuwaharaGPU":
             return [
                 {
-                    "label": "Kernel",
+                    "label": "kernel",
                     "type": "slider",
                     "min": 2.0,
                     "max": 64.0,

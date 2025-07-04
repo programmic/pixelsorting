@@ -587,11 +587,11 @@ def kuwahara(img: Image.Image, kernel: int, num_threads: int = None) -> Image.Im
     out = np.clip(out, 0, 255).astype(np.uint8)
     return Image.fromarray(out)
 
-def kuwaharaGPU(img: Image.Image, kernel_radius: int) -> Image.Image:
+def kuwaharaGPU(img: Image.Image, kernel: int) -> Image.Image:
     img = img.convert("RGB")
     img_np = np.array(img).astype(np.float32)
     height, width, channels = img_np.shape
-    window_size = kernel_radius + 1
+    window_size = kernel + 1
 
     flat_input = img_np.flatten()
     output_np = np.empty_like(flat_input)
@@ -723,7 +723,7 @@ def kuwaharaGPU(img: Image.Image, kernel_radius: int) -> Image.Image:
     kernel = program.kuwahara_filter
     kernel.set_args(input_buf, output_buf,
                     np.int32(width), np.int32(height),
-                    np.int32(channels), np.int32(kernel_radius))
+                    np.int32(channels), np.int32(kernel))
 
     global_size = (width, height)
     cl.enqueue_nd_range_kernel(queue, kernel, global_size, None)

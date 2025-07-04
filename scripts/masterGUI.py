@@ -1,3 +1,5 @@
+# masterGUI
+
 import sys
 from PySide6.QtWidgets import *
 from PySide6.QtCore import Qt
@@ -5,6 +7,9 @@ from superqt import QSearchableListWidget
 
 from guiElements.slotTableWidgets import SlotTableWidget
 from guiElements.renderPassWidget import RenderPassWidget
+from PIL import Image
+
+import renderHook
 
 class SearchableReorderableListWidget(QSearchableListWidget):
     """
@@ -18,6 +23,7 @@ class SearchableReorderableListWidget(QSearchableListWidget):
         self.list_widget.setAcceptDrops(True)
         self.list_widget.setDragDropMode(QListWidget.InternalMove)
         self.list_widget.setDefaultDropAction(Qt.MoveAction)
+
 
 class GUI(QWidget):
     def __init__(self):
@@ -36,29 +42,47 @@ class GUI(QWidget):
         
         self.list_widget = SearchableReorderableListWidget()
         left_center.addWidget(self.list_widget, stretch=1)
+
+        # Add Run Rendering button
+        self.run_button = QPushButton("Run Rendering")
+        self.run_button.clicked.connect(self.run_rendering)
+        left_center.addWidget(self.run_button)
+
         main_layout.addLayout(left_center, stretch=1)
         
+        right_side_layout = QVBoxLayout()
         self.pass_list = QListWidget()
-        self.pass_list.addItems([
-            "Blur",
-            "Invert",
-            "Simple Kuwahara",
-            "PixelSort",
-            "Mix By Percent",
-            "Mix Screen",
-            "Subtract",
-            "Adjust Brightness",
-            "Cristalline Growth"
-        ])
+        self.pass_name_mapping = {
+            "Blur": "blur",
+            "Invert": "invert",
+            "Simple Kuwahara": "kuwaharaGPU",
+            "PixelSort": "pixelSort",
+            "Mix By Percent": "mixPercent",
+            "Mix Screen": "mixScreen",
+            "Subtract": "subtract",
+            "Adjust Brightness": "adjustBrightness",
+            "Cristalline Growth": "cristallineGrowth"
+        }
+        self.pass_list.addItems(self.pass_name_mapping.keys())
         self.pass_list.setFixedWidth(150)
-        main_layout.addWidget(self.pass_list)
+        right_side_layout.addWidget(self.pass_list)
+
+        self.select_image_button = QPushButton("Select Image")
+        # Placeholder for button click event
+        self.select_image_button.clicked.connect(self.select_image)
+        right_side_layout.addWidget(self.select_image_button)
+
+        main_layout.addLayout(right_side_layout)
 
         self.pass_list.itemClicked.connect(self.on_pass_selected)
         self.slot_table.slot_clicked.connect(self.on_slot_clicked)
         self.update_slot_usage()
 
     def on_pass_selected(self, item):
-        renderpass_type = item.text()
+        display_name = item.text()
+        internal_name = self.pass_name_mapping.get(display_name, display_name)
+        renderpass_type = internal_name
+        
         widget = RenderPassWidget(
             renderpass_type,
             self.available_slots,
@@ -120,6 +144,30 @@ class GUI(QWidget):
 
         self.slot_usage["slot0"] = True  # Original always occupied
         self.slot_table.refresh_colors(self.slot_usage)
+
+    def run_rendering(self):
+        try:
+            renderHook.run_all_render_passes(self)
+        except Exception as e:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.critical(self, "Rendering Error", str(e))
+
+    def select_image(self):
+        from PySide6.QtWidgets import QFileDialog, QMessageBox
+        file_dialog = QFileDialog(self)
+        file_dialog.setWindowTitle("Select Image")
+        file_dialog.setNameFilter("Images (*.png *.jpg *.bmp *.tiff)")
+        if file_dialog.exec():
+            selected_files = file_dialog.selectedFiles()
+            if selected_files:
+                image_path = selected_files[0]
+                try:
+                    img = Image.open(image_path).convert("RGB")
+                    self.slot_table.set_image("slot0", img)
+                    QMessageBox.information(self, "Image Loaded", f"Image loaded into slot0:\n{image_path}")
+                    self.update_slot_usage()
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", f"Failed to load image:\n{str(e)}")
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)

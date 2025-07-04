@@ -1,0 +1,134 @@
+{
+  "Mix By Percent": [
+    {
+      "kategory": "mix"
+    },
+    {
+      "label": "Mix Factor",
+      "type": "slider",
+      "min": 0.0,
+      "max": 100.0,
+      "default": 50.0
+    }
+  ],
+  "Blur": [
+    {
+      "kategory": "blur"
+    },
+    {
+      "label": "Blur Type",
+      "type": "radio",
+      "options": [
+        "Box",
+        "Gaussian"
+      ],
+      "default": "Box"
+    },
+    {
+      "label": "Blur Kernel",
+      "type": "slider",
+      "min": 1.0,
+      "max": 64.0,
+      "default": 8.0,
+      "integer": true
+    }
+  ],
+  "Invert": [
+    {
+      "kategory": "invert"
+    },
+    {
+      "label": "Invert type",
+      "type": "radio",
+      "options": [
+        "Luminance",
+        "R",
+        "G",
+        "B",
+        "RG",
+        "GB",
+        "RB"
+      ],
+      "default": "Luminance"
+    },
+    {
+      "label": "Impact Factor",
+      "type": "slider",
+      "min": 0.0,
+      "max": 100.0,
+      "default": 100.0
+    }
+  ],
+  "kuwaharaGPU": [
+    {
+      "kategory": "kuwahara"
+    },
+    {
+      "label": "kernel",
+      "type": "slider",
+      "min": 2.0,
+      "max": 64.0,
+      "default": 8.0
+    }
+  ],
+  "PixelSort": [
+    {
+      "kategory": "pixelSort"
+    },
+    {
+      "label": "Use vSplitting",
+      "type": "switch",
+      "default": true
+    },
+    {
+      "label": "Sort mode",
+      "type": "dropdown",
+      "options": [
+        "Lum",
+        "HUE",
+        "R",
+        "G",
+        "B"
+      ],
+      "default": "Lum"
+    },
+    {
+      "label": "Flip Horizontally",
+      "type": "switch",
+      "default": false
+    },
+    {
+      "label": "Flip Vertically",
+      "type": "switch",
+      "default": false
+    },
+    {
+      "label": "Rotate",
+      "type": "radio",
+      "options": [
+        "-90",
+        "0",
+        "90",
+        "180"
+      ],
+      "default": "0"
+    }
+  ],
+  "Mix Screen": [
+    {
+      "kategory": "mix"
+    }
+  ],
+  "Cristalline Growth": [
+    {
+      "kategory": "cristalline_growth"
+    },
+    {
+      "label": "Cluster Seeds (%)",
+      "type": "slider",
+      "min": 1.0,
+      "max": 100.0,
+      "default": 30.0
+    }
+  ]
+}
