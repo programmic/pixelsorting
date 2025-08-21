@@ -2,7 +2,7 @@
 
 from PySide6.QtWidgets import (QWidget, QHBoxLayout, QPushButton, QGraphicsDropShadowEffect,
                               QStyle, QStyleOption, QStylePainter)
-from PySide6.QtCore import Qt, Signal, QPoint, QSize, QTimer, QRect
+from PySide6.QtCore import Qt, Signal, QPoint, QSize, QTimer, QRect, QEvent
 from PySide6.QtGui import (QPixmap, QPainter, QBrush, QColor, QPen, QLinearGradient,
                           QPainterPath, QFont, QFontMetrics, QPalette)
 from .modernSlotPreviewWidget import ModernSlotPreviewWidget
@@ -178,9 +178,11 @@ class ModernSlotTableWidget(QWidget):
             btn.customContextMenuRequested.connect(
                 lambda pos, slot=slot_name: self._show_context_menu(slot, pos)
             )
+            btn.installEventFilter(self)
             
         # Preview system - use centralized preview manager
         self.preview_timer = QTimer()
+
         self.preview_timer.setSingleShot(True)
         self.preview_timer.timeout.connect(self._show_preview)
         self.current_preview_slot = None
@@ -236,11 +238,13 @@ class ModernSlotTableWidget(QWidget):
         for slot_name, btn in self.buttons:
             if btn.underMouse():
                 if self.current_preview_slot != slot_name:
+                    self.preview_timer.stop()  # Stop previous timer
                     self.current_preview_slot = slot_name
                     self.preview_timer.start(500)  # Delay to prevent flicker
                 return
                 
         self.current_preview_slot = None
+
         preview_manager.hide_preview(delay=100)
         
     def _show_preview(self):
@@ -342,3 +346,8 @@ class ModernSlotTableWidget(QWidget):
     def sizeHint(self):
         """Provide proper size hint for layout."""
         return QSize(len(self.slots) * 34 + 8, 40)
+
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.Leave:
+            preview_manager.hide_preview(delay=100)
+        return False

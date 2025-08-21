@@ -1,8 +1,8 @@
-# masterGUI
+# masterGUI.py
+from guiElements.preview_manager_instance import preview_manager
 
 import sys
 import subprocess
-import sys
 from PySide6.QtWidgets import *
 from PySide6.QtCore import Qt, QThread, QTimer
 from superqt import QSearchableListWidget
@@ -38,7 +38,7 @@ class GUI(QWidget):
         self.setWindowTitle("Renderpass GUI with Mask Support")
         self.available_slots = [f"slot{i}" for i in range(16)]
         self.slot_usage = {}
-        self.current_selection_mode = None
+        self.currentSelectionMode = None
         self.currentWidget = None
         self.original_image_slots = set()
         self.imported_images = {}  # Dictionary to store imported images
@@ -288,9 +288,13 @@ class GUI(QWidget):
             if widget.selectedOutput in self.slotUsage:
                 self.slotUsage[widget.selectedOutput] = True
                 
-            settings = widget.get_settings()
-            if settings.get("enabled") and settings.get("slot") in self.slotUsage:
-                self.slotUsage[settings.get("slot")] = True
+            # Mark mask slot usage if mask is enabled
+            try:
+                mask = widget.maskWidget.get_values()
+                if mask.get("enabled") and mask.get("slot") in self.slotUsage:
+                    self.slotUsage[mask.get("slot")] = True
+            except Exception:
+                pass
 
         self.slotUsage["slot0"] = True  # Original always occupied
         self.slotTable.refreshColors(self.slotUsage)

@@ -1,48 +1,46 @@
-# modernSlotPreviewWidget.py
-from .preview_manager_instance import preview_manager
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QGraphicsDropShadowEffect,
-                              QHBoxLayout, QFrame)
-from PySide6.QtCore import Qt, QPoint, QPropertyAnimation, QRect, QSize, QEvent
-from PySide6.QtGui import (QPixmap, QPainter, QPainterPath, QBrush, QColor, QPen,
-                          QLinearGradient, QFont, QFontMetrics)
+# modernSlotPreviewWidgetFixed.py
 
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QGraphicsDropShadowEffect,
+                              QHBoxLayout, QPushButton, QGraphicsDropShadowEffect)
+from PySide6.QtCore import Qt, QPoint, QRect, QSize, QEvent, QPropertyAnimation
+from PySide6.QtGui import (QPixmap, QPainter, QPainterPath, QBrush, QColor, QPen,
+                          QLinearGradient, QFont)
 from PIL.ImageQt import ImageQt
 import math
 
 
-class ModernSlotPreviewWidget(QWidget):
+class ModernSlotPreviewWidgetFixed(QWidget):
     """
-    A modern, non-flickering preview widget for slot images.
+    A modern, non-flickering preview widget for slot images with fixed geometry issues.
     
     Features:
-    - Smooth fade-in/out animations
-    - Proper positioning to avoid screen edges
-    - High-DPI support
-    - Modern styling with shadows
+    - Proper screen bounds checking
+    - Responsive sizing based on content
+    - Fixed positioning logic
+    - Improved lifecycle management
     """
     
     def __init__(self, parent=None):
         super().__init__(parent, Qt.ToolTip | Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        # Remove WA_DeleteOnClose to prevent premature deletion
+        self.setAttribute(Qt.WA_DeleteOnClose, False)
         
         # Animation support
         self._opacity = 0.0
         self._animation = QPropertyAnimation(self, b"windowOpacity")
-        self._animation.setDuration(150)  # Smooth fade
+        self._animation.setDuration(150)
         self._animation_active = False
         
         # Modern styling
         self._setup_ui()
         
     def _setup_ui(self):
-        """Setup the modern UI."""
-        #self.setFixedSize(220, 220)
+        """Setup the modern UI with responsive sizing."""
+        self.setFixedSize(200, 180)  # Reduced size to fit most screens
         
         # Main layout
         self.layout = QVBoxLayout(self)
-
-        self.layout.setContentsMargins(8, 8, 8, 8)
+        self.layout.setContentsMargins(6, 6, 6, 6)
         
         # Image label
         self.image_label = QLabel()
@@ -54,20 +52,19 @@ class ModernSlotPreviewWidget(QWidget):
                 border-radius: 4px;
             }
         """)
-        #self.image_label.setFixedSize(200, 160)
+        self.image_label.setFixedSize(188, 140)
         
         # Info label
         self.info_label = QLabel()
-
         self.info_label.setAlignment(Qt.AlignCenter)
         self.info_label.setWordWrap(True)
         self.info_label.setStyleSheet("""
             QLabel {
                 color: #cccccc;
-                font-size: 11px;
-                padding: 4px;
+                font-size: 10px;
+                padding: 2px;
                 background-color: rgba(45, 45, 45, 180);
-                border-radius: 4px;
+                border-radius: 3px;
             }
         """)
         
@@ -76,9 +73,9 @@ class ModernSlotPreviewWidget(QWidget):
         
         # Add shadow effect
         shadow = QGraphicsDropShadowEffect()
-        shadow.setBlurRadius(20)
-        shadow.setColor(QColor(0, 0, 0, 100))
-        shadow.setOffset(0, 2)
+        shadow.setBlurRadius(15)
+        shadow.setColor(QColor(0, 0, 0, 80))
+        shadow.setOffset(0, 1)
         self.setGraphicsEffect(shadow)
         
     def updateContent(self, image=None, render_pass_info=None):
@@ -88,14 +85,12 @@ class ModernSlotPreviewWidget(QWidget):
             qim = ImageQt(image)
             pixmap = QPixmap.fromImage(qim)
             
-            
             # Scale to fit while maintaining aspect ratio
             scaled_pixmap = pixmap.scaled(
                 self.image_label.width(), self.image_label.height(),
                 Qt.KeepAspectRatio,
                 Qt.SmoothTransformation
             )
-
             self.image_label.setPixmap(scaled_pixmap)
             self.image_label.show()
         else:
@@ -108,15 +103,17 @@ class ModernSlotPreviewWidget(QWidget):
             self.info_label.hide()
             
     def show_at_position(self, parent_widget, local_pos):
-        """Show the preview at the correct position avoiding screen edges."""
+        """Show the preview at the correct position with screen bounds checking."""
         # Convert to global coordinates
         global_pos = parent_widget.mapToGlobal(local_pos)
         
         # Get screen geometry
         screen = parent_widget.screen()
+        if screen is None:
+            screen = QApplication.primaryScreen()
         screen_rect = screen.availableGeometry()
         
-        # Calculate position
+        # Calculate position with bounds checking
         preview_width = self.width()
         preview_height = self.height()
         
@@ -124,7 +121,7 @@ class ModernSlotPreviewWidget(QWidget):
         x = global_pos.x() + 15
         y = global_pos.y() - preview_height // 2
         
-        # Adjust if off screen
+        # Ensure we stay within screen bounds
         if x + preview_width > screen_rect.right():
             x = global_pos.x() - preview_width - 15
             
@@ -134,19 +131,17 @@ class ModernSlotPreviewWidget(QWidget):
         if y + preview_height > screen_rect.bottom():
             y = screen_rect.bottom() - preview_height - 10
             
-        # Position and show with animation
+        # Ensure minimum distance from edges
+        x = max(screen_rect.left() + 10, min(x, screen_rect.right() - preview_width - 10))
+        y = max(screen_rect.top() + 10, min(y, screen_rect.bottom() - preview_height - 10))
+        
+        # Position and show
         self.move(x, y)
         self.show()
-
-        # Connect leaveEvent to hide the preview
-        # parent_widget.leaveEvent.connect(self.hide)
         
-        # Fade in
-
-
+        # Fade in animation
         self._animation.setStartValue(0.0)
         self._animation.setEndValue(1.0)
-        self._animation_active = True
         self._animation.start()
         
     def hide(self):
@@ -154,71 +149,42 @@ class ModernSlotPreviewWidget(QWidget):
         if not self.isVisible() or self._animation_active:
             return
             
-        self._animation_active = True
         self._animation.setStartValue(1.0)
         self._animation.setEndValue(0.0)
-        
-        # Disconnect any existing connections first
-        try:
-            self._animation.finished.disconnect()
-        except:
-            pass
-            
         self._animation.finished.connect(self._close_after_animation)
         self._animation.start()
         
     def _close_after_animation(self):
-        """Close after fade out with safety checks."""
+        """Close after fade out animation."""
         try:
-            # Check if widget still exists
             if self and self.isVisible():
                 super().hide()
-                # Don't call close() to prevent deletion issues
-                # Let parent manage lifecycle
         except (RuntimeError, AttributeError):
-            # Widget already deleted, ignore
             pass
-        finally:
-            self._animation_active = False
             
     def paintEvent(self, event):
         """Custom paint for rounded corners."""
-        try:
-            painter = QPainter(self)
-            painter.setRenderHint(QPainter.Antialiasing)
-            
-            # Draw background
-            path = QPainterPath()
-            path.addRoundedRect(self.rect(), 8, 8)
-            
-            # Gradient background
-            gradient = QLinearGradient(0, 0, 0, self.height())
-            gradient.setColorAt(0, QColor(35, 35, 35, 240))
-            gradient.setColorAt(1, QColor(25, 25, 25, 240))
-            
-            painter.fillPath(path, QBrush(gradient))
-            
-            # Border
-            painter.setPen(QPen(QColor(100, 100, 100, 200), 1))
-            painter.drawPath(path)
-        except (RuntimeError, AttributeError):
-            # Widget already deleted, ignore paint errors
-            pass
-            
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        # Draw background
+        path = QPainterPath()
+        path.addRoundedRect(self.rect(), 6, 6)
+        
+        gradient = QLinearGradient(0, 0, 0, self.height())
+        gradient.setColorAt(0, QColor(35, 35, 35, 240))
+        gradient.setColorAt(1, QColor(25, 25, 25, 240))
+        
+        painter.fillPath(path, QBrush(gradient))
+        
+        # Border
+        painter.setPen(QPen(QColor(100, 100, 100, 200), 1))
+        painter.drawPath(path)
+        
     def sizeHint(self):
         """Provide proper size hint."""
-        return QSize(220, 220)
+        return QSize(200, 180)
         
-    def __del__(self):
-        """Cleanup when widget is destroyed."""
-        try:
-            if hasattr(self, '_animation'):
-                self._animation.stop()
-                self._animation.finished.disconnect()
-        except:
-            pass
-
-    def eventFilter(self, watched, event):
-        if event.type() == QEvent.Leave:
-            self.hide()
-        return super().eventFilter(watched, event)
+    def minimumSizeHint(self):
+        """Provide minimum size hint to prevent geometry issues."""
+        return QSize(180, 160)

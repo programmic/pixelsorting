@@ -32,6 +32,14 @@ def get_g(v) -> int: return v[1]
 def get_b(v) -> int: return v[2]
 
 
+# Backward-compatible aliases for legacy callers
+getLuminance = get_luminance
+getHUE = get_hue
+getR = get_r
+getG = get_g
+getB = get_b
+
+
 def rotate_coords(coords, img_size, angle):
     width, height = img_size
     if angle == 90:

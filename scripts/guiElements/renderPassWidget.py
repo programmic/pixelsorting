@@ -92,7 +92,6 @@ class RenderPassWidget(QWidget):
         self.mainLayout.addLayout(self.ioLayout)
 
         # Settings configuration
-        print("preparing to load settings")
         settingsConfig = self.get_settings_config(renderpass_type)
         
         # Extract saved settings for this render pass
@@ -131,14 +130,13 @@ class RenderPassWidget(QWidget):
         self.deleteLater()
 
     def _on_input_click(self, event, input_idx):
-        self.selection_mode = 'input'
-        self.current_selectedInput = input_idx
+        self.selectionMode = 'input'
+        self.currentSelectedInput = input_idx
         
         for i, label in enumerate(self.inputLabels):
             label.setStyleSheet(
-                "background-color: #a0c4ff;" if i == input_idx
-                else "background-color: lightgray;"
-                "padding: 4px; border-radius: 4px; min-width: 80px;" 
+                ("background-color: #a0c4ff;" if i == input_idx else "background-color: lightgray;")
+                + "padding: 4px; border-radius: 4px; min-width: 80px;"
             )
         self.outputLabel.setStyleSheet("""
             background-color: lightgray;
@@ -150,8 +148,8 @@ class RenderPassWidget(QWidget):
         self.onSelectSlot('input', self)
 
     def _on_output_click(self, event):
-        self.selection_mode = 'output'
-        self.current_selectedInput = None
+        self.selectionMode = 'output'
+        self.currentSelectedInput = None
         
         for label in self.inputLabels:
             label.setStyleSheet("""
@@ -169,10 +167,10 @@ class RenderPassWidget(QWidget):
         # Store old output to clear its source info
         old_output = self.selectedOutput
 
-        if self.selection_mode == 'input' and self.current_selectedInput is not None:
-            self.selectedInputs[self.current_selectedInput] = slot_name
-            self.inputLabels[self.current_selectedInput].setText(f"Input {self.current_selectedInput + 1}: {slot_name}")
-        elif self.selection_mode == 'output':
+        if self.selectionMode == 'input' and self.currentSelectedInput is not None:
+            self.selectedInputs[self.currentSelectedInput] = slot_name
+            self.inputLabels[self.currentSelectedInput].setText(f"Input {self.currentSelectedInput + 1}: {slot_name}")
+        elif self.selectionMode == 'output':
             # Prevent selecting slot0 as output
             if slot_name == "slot0":
                 self.outputLabel.setText("Output: <cannot use slot0>")
@@ -187,11 +185,11 @@ class RenderPassWidget(QWidget):
                 # Update the new output slot source
                 source_info = f"{self.renderpass_type} Pass\nInputs: {', '.join(str(inp) for inp in self.selectedInputs if inp)}"
                 self.onUpdateSlotSource(slot_name, source_info)
-        elif self.selection_mode == 'mask':
+        elif self.selectionMode == 'mask':
             self.maskWidget.set_mask_slot(slot_name)
             
-        self.selection_mode = None
-        self.current_selectedInput = None
+        self.selectionMode = None
+        self.currentSelectedInput = None
 
     def get_settings(self):
         """
@@ -237,7 +235,6 @@ class RenderPassWidget(QWidget):
                 print(f"Warning: Invalid settings format for {self.renderpass_type}: {type(settings_data)}")
 
     def get_settings_config(self, renderpass_type):
-        print("Loading settings from external JSON")
         # Load settings from renderPasses.json once and cache
         if RenderPassWidget._settings_cache is None:
             try:
@@ -246,12 +243,14 @@ class RenderPassWidget(QWidget):
                 # Go up two levels to project root (scripts/guiElements -> scripts -> project root)
                 project_root = os.path.dirname(os.path.dirname(script_dir))
                 json_path = os.path.join(project_root, 'renderPasses.json')
-                with open(json_path, 'r', encoding='utf-8') as f:
-                    RenderPassWidget._settings_cache = json.load(f)
-                    print(f"Successfully loaded render pass settings from JSON")
+                try:
+                    with open(json_path, 'r', encoding='utf-8') as f:
+                        RenderPassWidget._settings_cache = json.load(f)
+                except Exception as e:
+                    print(f"Error loading renderPasses.json: {e}")
+                    RenderPassWidget._settings_cache = {}
             except Exception as e:
-                print(f"Error loading renderPasses.json: {e}")
-                RenderPassWidget._settings_cache = {}
+                print(f"An unexpected error occurred: {e}")
 
         settings_list = RenderPassWidget._settings_cache.get(renderpass_type)
         if settings_list and isinstance(settings_list, list):
@@ -265,5 +264,5 @@ class RenderPassWidget(QWidget):
             ]
     
     def start_slot_selection(self, mode):
-        self.selection_mode = mode
+        self.selectionMode = mode
         self.onSelectSlot(mode, self)

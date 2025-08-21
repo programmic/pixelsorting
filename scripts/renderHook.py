@@ -154,57 +154,22 @@ def run_render_pass(render_pass_widget, slot_table, progress_callback=None):
             progress_callback(f"Skipping disabled pass: {renderpass_type}")
         return None
 
-    # Map UI names to function names
+    # Map UI names to function names (aligned with passes.py)
     func_name_map = {
-    "Scale to fit": "scale_image",
-
-    "PixelSort": "wrap_sort",
-
-    "PixelSort": "sort",
-
-    "PixelSort": "sort",
-
-    "Subtract Images": "subtract_images",
-
-    "Subtract Images": "subtract_images",
-
-    "Subtract Images": "subtract_images",
-
         "Mix By Percent": "mix_by_percent",
         "Blur": "blur",
         "Invert": "invert",
         "PixelSort": "sort",
-        "Mix Screen": "mix_screen",
+        "Mix Screen": "alpha_over",
         "kuwaharaGPU": "kuwahara_gpu",
-        "Cristalline Growth": "cristalline_growth"
+        "Cristalline Growth": "cristalline_expansion",
+        "Subtract Images": "subtract_images",
+        "Contrast Mask": "contrast_mask",
+        "Scale to fit": "scale_image",
     }
     
     # Map UI setting names to function parameter names
     setting_name_map = {
-    "Downscale [%]": "downscale",
-
-    "Rotate?": "rotate",
-
-    "Flip Vertical": "flipVert",
-
-    "Flip Horizontal": "flipHorz",
-
-    "Use vSplitting?": "vSplitting",
-
-    "Sort Mode": "mode",
-
-    "Rotate": "rotate",
-
-    "Flip Direction": "flip_dir",
-
-    "Sort Mode": "mode",
-
-    "Rotate": "rotate",
-
-    "Flip": "flip_dir",
-
-    "Sort Mode": "mode",
-
         # Blur settings
         "Blur Type": "blur_type",
         "Blur Kernel": "blur_kernel",
@@ -213,14 +178,17 @@ def run_render_pass(render_pass_widget, slot_table, progress_callback=None):
         "Impact Factor": "impact_factor",
         # Mix settings
         "Mix Factor": "mix_factor",
-        # PixelSort settings
-        "Use vSplitting": "vsplit",
-        "Sort mode": "mode",
-        "Flip Horizontally": "flip_dir",
         # Kuwahara settings
         "kernel_size": "kernel_size",
         # Crystalline Growth settings
-        "Cluster Seeds (%)": "cluster_seeds"
+        "Cluster Seeds (%)": "c",
+        # Scale settings
+        "Downscale [%]": "downscale",
+        # PixelSort UI (handled specially below)
+        "Use vSplitting?": "vSplitting",
+        "Flip Horizontal": "flipHorz",
+        "Flip Vertical": "flipVert",
+        # Contrast Mask handled specially (Luminance Range -> lim_lower/lim_upper)
     }
     
     func_name = func_name_map.get(renderpass_type)
@@ -234,6 +202,24 @@ def run_render_pass(render_pass_widget, slot_table, progress_callback=None):
         mapped_key = setting_name_map.get(key, key)
         mapped_settings[mapped_key] = value
     settings = mapped_settings
+
+    # Special-case transformations based on pass type
+    if renderpass_type == "Contrast Mask":
+        rng = settings.get("Luminance Range") or settings.get("luminance_range")
+        if isinstance(rng, (list, tuple)) and len(rng) == 2:
+            try:
+                settings["lim_lower"], settings["lim_upper"] = int(rng[0]), int(rng[1])
+            except Exception:
+                pass
+
+    if renderpass_type == "PixelSort":
+        # Combine flip flags into single flip_dir for sort()
+        flip_h = settings.pop("flipHorz", False)
+        flip_v = settings.pop("flipVert", False)
+        settings["flip_dir"] = bool(flip_h) or bool(flip_v)
+        # Provide sensible defaults if not present
+        settings.setdefault("mode", "lum")
+        settings.setdefault("rotate", False)
 
     func = getattr(passes, func_name)
     sig = inspect.signature(func)

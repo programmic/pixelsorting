@@ -1,7 +1,7 @@
-from PySide6.QtCore import QObject, QTimer, QPoint, QThread
+from PySide6.QtCore import QObject, QTimer, QPoint, QThread, Signal
 from PySide6.QtWidgets import QApplication
-from .modernSlotPreviewWidget import ModernSlotPreviewWidget
 import weakref
+import gc
 
 
 class PreviewManager(QObject):
@@ -20,6 +20,12 @@ class PreviewManager(QObject):
         self._hide_timer.timeout.connect(self._delayed_hide)
         self._current_widget_ref = None
         self._is_showing = False
+        self._active_widgets = weakref.WeakSet()
+        
+        # Connect to application quit signal for cleanup
+        app = QApplication.instance()
+        if app:
+            app.aboutToQuit.connect(self.force_cleanup)
         
     @classmethod
     def instance(cls):
@@ -31,14 +37,19 @@ class PreviewManager(QObject):
     def get_preview_widget(self):
         """Get or create the preview widget."""
         if self._preview_widget is None:
+            # Import here to avoid circular imports
+            from .modernSlotPreviewWidget import ModernSlotPreviewWidget
             self._preview_widget = ModernSlotPreviewWidget()
+            self._active_widgets.add(self._preview_widget)
             
         # Check if widget is still valid
         try:
             self._preview_widget.isVisible()
         except (RuntimeError, AttributeError):
             # Widget was deleted, recreate
+            from .modernSlotPreviewWidget import ModernSlotPreviewWidget
             self._preview_widget = ModernSlotPreviewWidget()
+            self._active_widgets.add(self._preview_widget)
             
         return self._preview_widget
         
@@ -77,9 +88,9 @@ class PreviewManager(QObject):
             
     def _delayed_hide(self):
         """Actually hide the preview."""
-        if self._preview_widget and self._preview_widget.isVisible():
+        if self._preview_widget is not None and self._preview_widget.isVisible():
             try:
-                self._preview_widget.hide()
+                self._preview_widget.deleteLater()
                 self._is_showing = False
             except (RuntimeError, AttributeError):
                 # Widget was deleted
@@ -104,14 +115,31 @@ class PreviewManager(QObject):
         
     def cleanup(self):
         """Clean up resources."""
-        if self._preview_widget:
-            try:
-                self._preview_widget.hide()
-                self._preview_widget.deleteLater()
-            except:
-                pass
-        self._preview_widget = None
         self._hide_timer.stop()
+        
+        # Clean up all active widgets
+        for widget in list(self._active_widgets):
+            try:
+                if widget and widget.isVisible():
+                    widget.hide()
+                if widget:
+                    widget.deleteLater()
+            except (RuntimeError, AttributeError):
+                pass
+        
+        self._active_widgets.clear()
+        self._preview_widget = None
+        self._is_showing = False
+        
+    def force_cleanup(self):
+        """Force cleanup on application exit."""
+        self.cleanup()
+        # Force garbage collection
+        gc.collect()
+        
+    def get_active_widget_count(self):
+        """Get count of active preview widgets for debugging."""
+        return len(self._active_widgets)
 
 
 # Global instance

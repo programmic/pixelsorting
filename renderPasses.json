@@ -73,7 +73,8 @@
   ],
   "Mix Screen": [
     {
-      "kategory": "mix"
+      "kategory": "mix",
+      "num_inputs": 2
     }
   ],
   "Cristalline Growth": [
