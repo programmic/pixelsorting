@@ -38,6 +38,10 @@ class MaskWidget(QWidget):
         self.selected_slot = slot_name
         self.slot_button.setText(slot_name)
         
+    def set_mask_slot(self, slot_name: str):
+        """Alias for set_slot to maintain compatibility with renderPassWidget"""
+        self.set_slot(slot_name)
+        
     def get_values(self):
         """
         Get the current values of the mask widget.
@@ -48,3 +52,19 @@ class MaskWidget(QWidget):
             "enabled": self.enabled.isChecked(),
             "slot": self.selected_slot
         }
+
+    def load_settings(self, settings_dict):
+        """
+        Load saved settings into the mask widget.
+
+        :param settings_dict: Dictionary containing saved mask settings
+        """
+        if not settings_dict:
+            return
+            
+        if 'enabled' in settings_dict:
+            self.enabled.setChecked(bool(settings_dict['enabled']))
+            
+        if 'slot' in settings_dict:
+            self.selected_slot = settings_dict['slot']
+            self.slot_button.setText(str(self.selected_slot))

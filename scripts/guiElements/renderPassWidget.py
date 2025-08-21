@@ -4,7 +4,12 @@ from PySide6.QtCore import Qt
 from .maskWidget import *
 from .renderPassSettingsWidget import *
 
+import json
+import os
+
 class RenderPassWidget(QWidget):
+    _settings_cache = None
+
     """
     Widget representing a single render pass with configurable inputs, output, and settings.
     Supports 1 or 2 input slots depending on pass type, plus mask functionality.
@@ -12,48 +17,56 @@ class RenderPassWidget(QWidget):
     Args:
         renderpass_type (str): Type of render pass (e.g., "Blur", "Mix By Percent")
         available_slots (list[str]): List of available slot names 
-        on_select_slot (callable): Callback when slot selection is initiated
-        on_delete (callable): Callback to remove this widget from GUI
+        onSelectSlot (callable): Callback when slot selection is initiated
+        onDelete (callable): Callback to remove this widget from GUI
     """
-    def __init__(self, renderpass_type: str, available_slots: list[str], on_select_slot, on_delete):
+    def __init__(self, renderpass_type: str, availableSlots: list[str], onSelectSlot, onDelete, onUpdateSlotSource=None, saved_settings: dict = None):
         super().__init__()
         self.renderpass_type = renderpass_type
-        self.available_slots = available_slots
-        self.on_select_slot = on_select_slot
-        self.on_delete = on_delete  # Store the delete callback
+        self.availableSlots = availableSlots
+        self.onSelectSlot = onSelectSlot
+        self.onDelete = onDelete  # Store the delete callback
+        self.onUpdateSlotSource = onUpdateSlotSource  # Callback to update slot source information
         
-        # Determine number of input buttons needed
-        self.num_inputs = 2 if renderpass_type in ["Mix By Percent", "Mix Screen", "Subtract"] else 1
-        self.selected_inputs = [None] * self.num_inputs
-        self.selected_output = None
+        # Get settings configuration including input count
+        settings_config = self.get_settings_config(renderpass_type)
+        # Get category settings which contains input count
+        category_settings = next((s for s in settings_config if "kategory" in s), None)
+        # Determine number of inputs from category settings or default to 1
+        self.numInputs = category_settings.get("num_inputs", 1) if category_settings else 1
+        self.selectedInputs = [None] * self.numInputs
+        self.selectedOutput = None
+        
+        # Store saved settings for later use
+        self.savedSettings = saved_settings or {}
 
-        self.main_layout = QVBoxLayout(self)
-        self.main_layout.setContentsMargins(4, 4, 4, 4)
+        self.mainLayout = QVBoxLayout(self)
+        self.mainLayout.setContentsMargins(4, 4, 4, 4)
 
         # Create title bar with drag handle and delete button
         top = QHBoxLayout()
-        self.drag_bar = QLabel("☰")
-        self.drag_bar.setFixedWidth(20)
-        self.drag_bar.setAlignment(Qt.AlignCenter)
-        top.addWidget(self.drag_bar)
+        self.dragBar = QLabel("☰")
+        self.dragBar.setFixedWidth(20)
+        self.dragBar.setAlignment(Qt.AlignCenter)
+        top.addWidget(self.dragBar)
 
         self.title = QLabel(f"Renderpass: {renderpass_type}")
         self.title.setStyleSheet("font-weight: bold;")
         top.addWidget(self.title)
         top.addStretch()
 
-        self.delete_btn = QPushButton("✖")
-        self.delete_btn.setFixedWidth(30)
-        self.delete_btn.clicked.connect(self._delete_self)
-        top.addWidget(self.delete_btn)
-        self.main_layout.addLayout(top)
+        self.deleteBtn = QPushButton("✖")
+        self.deleteBtn.setFixedWidth(30)
+        self.deleteBtn.clicked.connect(self._delete_self)
+        top.addWidget(self.deleteBtn)
+        self.mainLayout.addLayout(top)
 
         # Input/output section
-        self.io_layout = QHBoxLayout()
+        self.ioLayout = QHBoxLayout()
         
         # Create input selection labels
-        self.input_labels = []
-        for i in range(self.num_inputs):
+        self.inputLabels = []
+        for i in range(self.numInputs):
             label = QLabel(f"Input {i+1}: <none>")
             label.setStyleSheet("""
                 background-color: lightgray;
@@ -62,42 +75,49 @@ class RenderPassWidget(QWidget):
                 min-width: 80px;
             """)
             label.mousePressEvent = lambda e, idx=i: self._on_input_click(e, idx)
-            self.io_layout.addWidget(label)
-            self.input_labels.append(label)
+            self.ioLayout.addWidget(label)
+            self.inputLabels.append(label)
 
         # Output selection
-        self.output_label = QLabel("Output: <none>")
-        self.output_label.setStyleSheet("""
+        self.outputLabel = QLabel("Output: <none>")
+        self.outputLabel.setStyleSheet("""
             background-color: lightgray;
             padding: 4px;
             border-radius: 4px;
             min-width: 80px;
         """)
-        self.output_label.mousePressEvent = self._on_output_click
-        self.io_layout.addWidget(self.output_label)
+        self.outputLabel.mousePressEvent = self._on_output_click
+        self.ioLayout.addWidget(self.outputLabel)
         
-        self.main_layout.addLayout(self.io_layout)
+        self.mainLayout.addLayout(self.ioLayout)
 
         # Settings configuration
-        settings_config = self.get_settings_config(renderpass_type)
-        self.settings_widget = RenderPassSettingsWidget(settings_config)
-        self.main_layout.addWidget(self.settings_widget)
+        print("preparing to load settings")
+        settingsConfig = self.get_settings_config(renderpass_type)
+        
+        # Extract saved settings for this render pass
+        saved_settings = {}
+        if self.savedSettings and 'settings' in self.savedSettings:
+            saved_settings = self.savedSettings['settings']
+        
+        self.settingsWidget = RenderPassSettingsWidget(settingsConfig, saved_settings)
+        self.mainLayout.addWidget(self.settingsWidget)
 
         # Mask widget
-        self.mask_widget = MaskWidget(available_slots, self.start_slot_selection)
-        self.main_layout.addWidget(self.mask_widget)
+        self.maskWidget = MaskWidget(availableSlots, self.start_slot_selection)
+        self.mainLayout.addWidget(self.maskWidget)
 
-        self.selection_mode = None
-        self.current_selected_input = None
+        self.selectionMode = None
+        self.currentSelectedInput = None
 
     def _cleanup(self):
         """Clean up child widgets and layouts to prevent leftover wrappers"""
         for child in self.findChildren(QWidget):
             child.setParent(None)
             child.deleteLater()
-        if self.main_layout is not None:
-            while self.main_layout.count():
-                item = self.main_layout.takeAt(0)
+        if self.mainLayout is not None:
+            while self.mainLayout.count():
+                item = self.mainLayout.takeAt(0)
                 if item.widget():
                     item.widget().setParent(None)
                     item.widget().deleteLater()
@@ -105,170 +125,145 @@ class RenderPassWidget(QWidget):
     def _delete_self(self):
         """Cleans up widget and calls callback to remove from GUI"""
         self._cleanup()
-        if self.on_delete:
-            self.on_delete(self)
+        if self.onDelete:
+            self.onDelete(self)
         self.setParent(None)
         self.deleteLater()
 
     def _on_input_click(self, event, input_idx):
         self.selection_mode = 'input'
-        self.current_selected_input = input_idx
+        self.current_selectedInput = input_idx
         
-        for i, label in enumerate(self.input_labels):
+        for i, label in enumerate(self.inputLabels):
             label.setStyleSheet(
                 "background-color: #a0c4ff;" if i == input_idx
                 else "background-color: lightgray;"
                 "padding: 4px; border-radius: 4px; min-width: 80px;" 
             )
-        self.output_label.setStyleSheet("""
+        self.outputLabel.setStyleSheet("""
             background-color: lightgray;
             padding: 4px;
             border-radius: 4px;
             min-width: 80px;
         """)
         
-        self.on_select_slot('input', self)
+        self.onSelectSlot('input', self)
 
     def _on_output_click(self, event):
         self.selection_mode = 'output'
-        self.current_selected_input = None
+        self.current_selectedInput = None
         
-        for label in self.input_labels:
+        for label in self.inputLabels:
             label.setStyleSheet("""
                 background-color: lightgray;
                 padding: 4px;
                 border-radius: 4px;
                 min-width: 80px;
             """)
-        self.output_label.setStyleSheet(
+        self.outputLabel.setStyleSheet(
             "background-color: #a0c4ff; padding: 4px; border-radius: 4px; min-width: 80px;"
         )
-        self.on_select_slot('output', self)
+        self.onSelectSlot('output', self)
 
     def set_slot(self, slot_name):
-        if self.selection_mode == 'input' and self.current_selected_input is not None:
-            self.selected_inputs[self.current_selected_input] = slot_name
-            self.input_labels[self.current_selected_input].setText(f"Input {self.current_selected_input + 1}: {slot_name}")
+        # Store old output to clear its source info
+        old_output = self.selectedOutput
+
+        if self.selection_mode == 'input' and self.current_selectedInput is not None:
+            self.selectedInputs[self.current_selectedInput] = slot_name
+            self.inputLabels[self.current_selectedInput].setText(f"Input {self.current_selectedInput + 1}: {slot_name}")
         elif self.selection_mode == 'output':
-            self.selected_output = slot_name
-            self.output_label.setText(f"Output: {slot_name}")
+            # Prevent selecting slot0 as output
+            if slot_name == "slot0":
+                self.outputLabel.setText("Output: <cannot use slot0>")
+                return
+                
+            if old_output and self.onUpdateSlotSource:
+                # Clear the old output slot source
+                self.onUpdateSlotSource(old_output, None)
+            self.selectedOutput = slot_name
+            self.outputLabel.setText(f"Output: {slot_name}")
+            if slot_name and self.onUpdateSlotSource:
+                # Update the new output slot source
+                source_info = f"{self.renderpass_type} Pass\nInputs: {', '.join(str(inp) for inp in self.selectedInputs if inp)}"
+                self.onUpdateSlotSource(slot_name, source_info)
         elif self.selection_mode == 'mask':
-            self.mask_widget.set_mask_slot(slot_name)
+            self.maskWidget.set_mask_slot(slot_name)
+            
         self.selection_mode = None
-        self.current_selected_input = None
+        self.current_selectedInput = None
 
     def get_settings(self):
         """
         Retrieve current settings from the settings widget.
         """
-        settings = self.settings_widget.get_values()
+        settings = self.settingsWidget.get_values()
         return settings
 
+    def load_settings(self, settings_dict):
+        """
+        Load saved settings into the widget.
+        
+        :param settings_dict: Dictionary containing saved settings
+        """
+        if not settings_dict:
+            return
+            
+        # Load input/output slots
+        if 'inputs' in settings_dict:
+            inputs = settings_dict['inputs']
+            for i, input_slot in enumerate(inputs):
+                if i < len(self.selectedInputs):
+                    self.selectedInputs[i] = input_slot
+                    if i < len(self.inputLabels):
+                        self.inputLabels[i].setText(f"Input {i+1}: {input_slot}")
+        
+        if 'output' in settings_dict:
+            self.selectedOutput = settings_dict['output']
+            self.outputLabel.setText(f"Output: {self.selectedOutput}")
+        
+        # Load mask settings
+        if 'mask' in settings_dict:
+            mask_settings = settings_dict['mask']
+            self.maskWidget.load_settings(mask_settings)
+        
+        # Load render pass settings
+        if 'settings' in settings_dict:
+            # Ensure we have a proper dictionary for settings
+            settings_data = settings_dict['settings']
+            if isinstance(settings_data, dict):
+                self.settingsWidget.set_values(settings_data)
+            else:
+                print(f"Warning: Invalid settings format for {self.renderpass_type}: {type(settings_data)}")
+
     def get_settings_config(self, renderpass_type):
-        # This method should return settings configuration per pass type
-        # Updated to return a list of dicts as expected by RenderPassSettingsWidget
-        if  renderpass_type == "Mix By Percent":
-            return [
-                {
-                    "label": "Mix Factor",
-                    "type": "slider",
-                    "min": 0.0,
-                    "max": 100.0,
-                    "default": 50.0
-                },
-            ]
-        elif renderpass_type == "Blur":
-            return [
-                {
-                    "label": "Blur Type",
-                    "type": "radio",
-                    "options": ['Box', 'Gaussian'],
-                    "default": "Box"
-                },
-                {
-                    "label": "Blur Kernel",
-                    "type": "slider",
-                    "min": 1.0,
-                    "max": 64.0,
-                    "default": 8.0,
-                    "integer": True
-                },
-            ]
-        elif renderpass_type == "Invert":
-            return [
-                {
-                    "label": "Invert type",
-                    "type": "radio",
-                    "options": ['Luminance', 'R', 'G', 'B', 'RG', 'GB', 'RB'],
-                    "default": "Luminance"
-                },
-                {
-                    "label": "Impact Factor",
-                    "type": "slider",
-                    "min": 0.0,
-                    "max": 100.0,
-                    "default": 100.0
-                },
-            ]
-        elif renderpass_type == "kuwaharaGPU":
-            return [
-                {
-                    "label": "kernel",
-                    "type": "slider",
-                    "min": 2.0,
-                    "max": 64.0,
-                    "default": 8.0
-                },
-            ]
-        elif renderpass_type == "PixelSort":
-            return [
-                {
-                    "label": "Use vSplitting",
-                    "type": "switch",
-                    "default": True
-                },
-                {
-                    "label": "Sort mode",
-                    "type": "dropdown",
-                    "options": ['Lum', 'HUE', 'R', 'G', 'B'],
-                    "default": "Lum"
-                },
-                {
-                    "label": "Flip Horizontally",
-                    "type": "switch",
-                    "default": False
-                },
-                {
-                    "label": "Flip Vertically",
-                    "type": "switch",
-                    "default": False
-                },
-                {
-                    "label": "Rotate",
-                    "type": "radio",
-                    "options": ['-90', '0', '90', '180'],
-                    "default": "0"
-                },
-            ]
-        elif renderpass_type == "Mix Screen":
-            return [
-            ]
-        elif renderpass_type == "Cristalline Growth":
-            return [
-                {
-                    "label": "Cluster Seeds (%)",
-                    "type": "slider",
-                    "min": 1.0,
-                    "max": 100.0,
-                    "default": 30.0
-                },
-            ]
+        print("Loading settings from external JSON")
+        # Load settings from renderPasses.json once and cache
+        if RenderPassWidget._settings_cache is None:
+            try:
+                # Get the directory where this script is located
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                # Go up two levels to project root (scripts/guiElements -> scripts -> project root)
+                project_root = os.path.dirname(os.path.dirname(script_dir))
+                json_path = os.path.join(project_root, 'renderPasses.json')
+                with open(json_path, 'r', encoding='utf-8') as f:
+                    RenderPassWidget._settings_cache = json.load(f)
+                    print(f"Successfully loaded render pass settings from JSON")
+            except Exception as e:
+                print(f"Error loading renderPasses.json: {e}")
+                RenderPassWidget._settings_cache = {}
+
+        settings_list = RenderPassWidget._settings_cache.get(renderpass_type)
+        if settings_list and isinstance(settings_list, list):
+            # Return the full list including category info
+            return settings_list
         else:
-            # Default fallback settings
+            # Default fallback settings with category info
             return [
-                {"label": "Enabled", "type": "switch", "default": True},
+                {"kategory": "default", "num_inputs": 1},
+                {"label": "Enabled", "type": "switch", "default": True}
             ]
     
     def start_slot_selection(self, mode):
         self.selection_mode = mode
-        self.on_select_slot(mode, self)
+        self.onSelectSlot(mode, self)

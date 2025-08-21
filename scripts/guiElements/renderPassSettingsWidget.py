@@ -2,7 +2,7 @@
 
 from PySide6.QtWidgets import *
 from PySide6.QtCore import Qt
-from superqt import QDoubleSlider, QToggleSwitch
+from superqt import QDoubleSlider, QToggleSwitch, QRangeSlider
 
 
 class RenderPassSettingsWidget(QWidget):
@@ -12,11 +12,12 @@ class RenderPassSettingsWidget(QWidget):
     :param settings_config: A list of settings configurations.
     :param parent: The parent widget.
     """
-    def __init__(self, settings_config: list[dict], parent=None):
+    def __init__(self, settings_config: list[dict], saved_settings: dict = None, parent=None):
         super().__init__(parent)
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.controls = {}
+        self.settings_config = settings_config
         
         # Track consecutive switches to stack horizontally
         switch_group = QWidget()
@@ -25,10 +26,28 @@ class RenderPassSettingsWidget(QWidget):
         switch_group.setLayout(switch_layout)
         switch_count = 0
 
-        for setting in settings_config:
+        # Filter out category info but keep other settings
+        filtered_settings = [s for s in settings_config if "kategory" not in s]
+        
+        # Create a dictionary of default values from filtered settings
+        default_values = {}
+        for setting in filtered_settings:
+            label = setting.get("label", "")
+            if label:
+                default_values[label] = setting.get("default")
+
+        # Apply saved settings if provided
+        if saved_settings:
+            # Merge saved settings with defaults
+            for label, default_val in default_values.items():
+                if label in saved_settings:
+                    default_values[label] = saved_settings[label]
+
+        for setting in filtered_settings:
             control = None
             label_text = setting.get("label", "")
             t = setting.get("type")
+            default_value = setting.get("default")
 
             if t == "switch":
                 # If first switch in group, add the group widget to main layout
@@ -42,7 +61,7 @@ class RenderPassSettingsWidget(QWidget):
                 
                 label = QLabel(label_text)
                 toggle = QToggleSwitch()
-                toggle.setChecked(setting.get("default", False))
+                toggle.setChecked(bool(default_value))
                 
                 hbox.addWidget(label)
                 hbox.addWidget(toggle)
@@ -71,13 +90,13 @@ class RenderPassSettingsWidget(QWidget):
                 button_group = QButtonGroup(self)
                 
                 label = QLabel(label_text)
-                self.layout.addWidget(label)
+                h_layout.addWidget(label)
                 
                 for option in options:
                     rb = QRadioButton(option)
                     h_layout.addWidget(rb)
                     button_group.addButton(rb)
-                    if option == setting.get("default"):
+                    if option == str(default_value):
                         rb.setChecked(True)
                 
                 self.controls[label_text] = button_group
@@ -92,7 +111,14 @@ class RenderPassSettingsWidget(QWidget):
                 label = QLabel(label_text)
                 combo = QComboBox()
                 combo.addItems(setting.get("options", []))
-                combo.setCurrentText(setting.get("default", ""))
+                
+                # Set default value
+                default_text = str(default_value) if default_value is not None else ""
+                index = combo.findText(default_text)
+                if index >= 0:
+                    combo.setCurrentIndex(index)
+                elif default_text and default_text in setting.get("options", []):
+                    combo.setCurrentText(default_text)
                 
                 v_layout.addWidget(label)
                 v_layout.addWidget(combo)
@@ -100,7 +126,7 @@ class RenderPassSettingsWidget(QWidget):
                 self.controls[label_text] = combo
                 control = widget
 
-            elif t in ["slider", "multislider"]:
+            elif t in ["slider", "multislider", "dualslider"]:
                 widget = QWidget()
                 v_layout = QVBoxLayout()
                 v_layout.setContentsMargins(0, 0, 0, 0)
@@ -108,20 +134,97 @@ class RenderPassSettingsWidget(QWidget):
                 label = QLabel(label_text)
                 v_layout.addWidget(label)
                 
-                if t == "multislider":
+                if t == "dualslider":
+                    # Dual slider for range selection
+                    slider = QRangeSlider(Qt.Horizontal)
+                    slider.setMinimum(setting.get("min", 0))
+                    slider.setMaximum(setting.get("max", 100))
+                    
+                    # Handle default values for dual slider
+                    if isinstance(default_value, (list, tuple)) and len(default_value) == 2:
+                        slider.setValue(default_value)
+                    else:
+                        # Use min/max as default range
+                        slider.setValue((setting.get("min", 0), setting.get("max", 100)))
+                    
+                    # Create labels for range display
+                    lower_label = QLabel(f"Min: {slider.value()[0]:.1f}")
+                    upper_label = QLabel(f"Max: {slider.value()[1]:.1f}")
+                    
+                    def update_range_labels(values):
+                        lower, upper = values
+                        lower_label.setText(f"Min: {lower:.1f}")
+                        upper_label.setText(f"Max: {upper:.1f}")
+                    
+                    slider.valueChanged.connect(update_range_labels)
+                    
+                    # Create + and - buttons for fine-tuning
+                    minus_btn = QPushButton("-")
+                    plus_btn = QPushButton("+")
+                    minus_btn.setFixedSize(25, 25)
+                    plus_btn.setFixedSize(25, 25)
+                    
+                    def decrement_range():
+                        lower, upper = slider.value()
+                        new_lower = max(lower - 1, slider.minimum())
+                        new_upper = max(upper - 1, slider.minimum())
+                        slider.setValue((new_lower, new_upper))
+                    
+                    def increment_range():
+                        lower, upper = slider.value()
+                        new_lower = min(lower + 1, slider.maximum())
+                        new_upper = min(upper + 1, slider.maximum())
+                        slider.setValue((new_lower, new_upper))
+                    
+                    minus_btn.clicked.connect(decrement_range)
+                    plus_btn.clicked.connect(increment_range)
+                    
+                    h_slider_layout = QHBoxLayout()
+                    h_slider_layout.addWidget(lower_label)
+                    h_slider_layout.addWidget(slider)
+                    h_slider_layout.addWidget(upper_label)
+                    h_slider_layout.addWidget(minus_btn)
+                    h_slider_layout.addWidget(plus_btn)
+                    
+                    slider_widget = QWidget()
+                    slider_widget.setLayout(h_slider_layout)
+                    v_layout.addWidget(slider_widget)
+                    
+                    self.controls[label_text] = slider
+                    
+                elif t == "multislider":
                     slider = QDoubleSlider(Qt.Horizontal)
                     slider.setMinimum(setting.get("min", 0))
                     slider.setMaximum(setting.get("max", 100))
-                    slider.setValue(setting.get("default", 0))
+                    slider.setValue(float(default_value) if default_value is not None else 0)
                     slider.setSingleStep(0.1)
                     
                     value_label = QLabel(str(slider.value()))
                     value_label.setFixedWidth(50)
                     slider.valueChanged.connect(lambda v, l=value_label: l.setText(str(v)))
                     
+                    # Create + and - buttons for fine-tuning
+                    minus_btn = QPushButton("-")
+                    plus_btn = QPushButton("+")
+                    minus_btn.setFixedSize(25, 25)
+                    plus_btn.setFixedSize(25, 25)
+                    
+                    def decrement_value():
+                        new_value = max(slider.value() - 0.1, slider.minimum())
+                        slider.setValue(new_value)
+                    
+                    def increment_value():
+                        new_value = min(slider.value() + 0.1, slider.maximum())
+                        slider.setValue(new_value)
+                    
+                    minus_btn.clicked.connect(decrement_value)
+                    plus_btn.clicked.connect(increment_value)
+                    
                     h_slider_layout = QHBoxLayout()
                     h_slider_layout.addWidget(slider)
                     h_slider_layout.addWidget(value_label)
+                    h_slider_layout.addWidget(minus_btn)
+                    h_slider_layout.addWidget(plus_btn)
                     
                     slider_widget = QWidget()
                     slider_widget.setLayout(h_slider_layout)
@@ -132,7 +235,7 @@ class RenderPassSettingsWidget(QWidget):
                     slider = QSlider(Qt.Horizontal)
                     slider.setMinimum(setting.get("min", 0))
                     slider.setMaximum(setting.get("max", 100))
-                    slider.setValue(setting.get("default", 0))
+                    slider.setValue(int(float(default_value)) if default_value is not None else 0)
                     
                     if setting.get("integer", False):
                         slider.setSingleStep(1)
@@ -141,9 +244,28 @@ class RenderPassSettingsWidget(QWidget):
                     value_label.setFixedWidth(50)
                     slider.valueChanged.connect(lambda v, l=value_label: l.setText(str(v)))
                     
+                    # Create + and - buttons for fine-tuning
+                    minus_btn = QPushButton("-")
+                    plus_btn = QPushButton("+")
+                    minus_btn.setFixedSize(25, 25)
+                    plus_btn.setFixedSize(25, 25)
+                    
+                    def decrement_value():
+                        new_value = max(slider.value() - 1, slider.minimum())
+                        slider.setValue(new_value)
+                    
+                    def increment_value():
+                        new_value = min(slider.value() + 1, slider.maximum())
+                        slider.setValue(new_value)
+                    
+                    minus_btn.clicked.connect(decrement_value)
+                    plus_btn.clicked.connect(increment_value)
+                    
                     h_slider_layout = QHBoxLayout()
                     h_slider_layout.addWidget(slider)
                     h_slider_layout.addWidget(value_label)
+                    h_slider_layout.addWidget(minus_btn)
+                    h_slider_layout.addWidget(plus_btn)
                     
                     slider_widget = QWidget()
                     slider_widget.setLayout(h_slider_layout)
@@ -174,6 +296,8 @@ class RenderPassSettingsWidget(QWidget):
                 result[label] = control.value()
             elif isinstance(control, QDoubleSlider):
                 result[label] = control.value()
+            elif isinstance(control, QRangeSlider):
+                result[label] = control.value()
             elif isinstance(control, QComboBox):
                 result[label] = control.currentText()
             else:
@@ -190,14 +314,42 @@ class RenderPassSettingsWidget(QWidget):
             control = self.controls.get(label)
             if control is None:
                 continue
-            if isinstance(control, QButtonGroup):
-                for btn in control.buttons():
-                    btn.setChecked(btn.text() == val)
-            elif isinstance(control, QToggleSwitch):
-                control.setChecked(bool(val))
-            elif isinstance(control, QSlider):
-                control.setValue(int(val))
-            elif isinstance(control, QDoubleSlider):
-                control.setValue(float(val))
-            elif isinstance(control, QComboBox):
-                control.setCurrentText(val)
+                
+            try:
+                if isinstance(control, QButtonGroup):
+                    # Handle radio button groups
+                    for btn in control.buttons():
+                        if btn.text() == str(val):
+                            btn.setChecked(True)
+                            break
+                elif isinstance(control, QToggleSwitch):
+                    control.setChecked(bool(val))
+                elif isinstance(control, QSlider):
+                    control.setValue(int(float(val)))
+                elif isinstance(control, QDoubleSlider):
+                    control.setValue(float(val))
+                elif isinstance(control, QRangeSlider):
+                    if isinstance(val, (list, tuple)) and len(val) == 2:
+                        control.setValue(val)
+                elif isinstance(control, QComboBox):
+                    # Handle both string and numeric values
+                    str_val = str(val)
+                    index = control.findText(str_val)
+                    if index >= 0:
+                        control.setCurrentIndex(index)
+                    else:
+                        # Try to find by data if text not found
+                        for i in range(control.count()):
+                            if control.itemText(i) == str_val:
+                                control.setCurrentIndex(i)
+                                break
+                        else:
+                            # Handle numeric values for dropdowns
+                            try:
+                                # Try to set as current text
+                                control.setCurrentText(str_val)
+                            except:
+                                pass
+                        
+            except (ValueError, TypeError) as e:
+                print(f"Error setting value for {label}: {e}")

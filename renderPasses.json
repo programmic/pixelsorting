@@ -64,54 +64,11 @@
       "kategory": "kuwahara"
     },
     {
-      "label": "kernel",
+      "label": "kernel_size",
       "type": "slider",
       "min": 2.0,
       "max": 64.0,
       "default": 8.0
-    }
-  ],
-  "PixelSort": [
-    {
-      "kategory": "pixelSort"
-    },
-    {
-      "label": "Use vSplitting",
-      "type": "switch",
-      "default": true
-    },
-    {
-      "label": "Sort mode",
-      "type": "dropdown",
-      "options": [
-        "Lum",
-        "HUE",
-        "R",
-        "G",
-        "B"
-      ],
-      "default": "Lum"
-    },
-    {
-      "label": "Flip Horizontally",
-      "type": "switch",
-      "default": false
-    },
-    {
-      "label": "Flip Vertically",
-      "type": "switch",
-      "default": false
-    },
-    {
-      "label": "Rotate",
-      "type": "radio",
-      "options": [
-        "-90",
-        "0",
-        "90",
-        "180"
-      ],
-      "default": "0"
     }
   ],
   "Mix Screen": [
@@ -129,6 +86,62 @@
       "min": 1.0,
       "max": 100.0,
       "default": 30.0
+    }
+  ],
+  "Subtract Images": [
+    {
+      "kategory": "subtract_images",
+      "num_inputs": 2
+    }
+  ],
+  "PixelSort": [
+    {
+      "kategory": "pixelsort",
+      "num_inputs": 1
+    },
+    {
+      "label": "Use vSplitting?",
+      "type": "switch",
+      "default": true
+    },
+    {
+      "label": "Flip Horizontal",
+      "type": "switch",
+      "default": false
+    },
+    {
+      "label": "Flip Vertical",
+      "type": "switch",
+      "default": false
+    }
+  ],
+  "Contrast Mask": [
+    {
+      "kategory": "mask"
+    },
+    {
+      "label": "Luminance Range",
+      "type": "dualslider",
+      "min": 0,
+      "max": 255,
+      "default": [
+        50,
+        200
+      ]
+    }
+  ],
+  "Scale to fit": [
+    {
+      "kategory": "scale_to_fit",
+      "num_inputs": 2
+    },
+    {
+      "label": "Downscale [%]",
+      "type": "slider",
+      "min": 0.0,
+      "max": 100.0,
+      "default": 0.0,
+      "integer": false
     }
   ]
 }
