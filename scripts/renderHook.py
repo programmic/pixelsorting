@@ -1,14 +1,22 @@
+from __future__ import annotations
 import os
 import time
 from PIL import Image
 import passes
 import inspect
 from utils import get_output_dir
-from typing import Dict, List, Set, Optional, Tuple
+from typing import Dict, List, Set, Optional, Tuple, Callable, TYPE_CHECKING
 from collections import defaultdict, deque
 
+from guiElements.modernSlotTableWidget import ModernSlotTableWidget
+from guiElements.renderPassWidget import RenderPassWidget
 
-def loadImageFromSlot(slotName, slotTable):
+if TYPE_CHECKING:
+    from masterGUI import GUI
+
+
+
+def loadImageFromSlot(slotName: str, slotTable: 'ModernSlotTableWidget') -> Image.Image:
     """Load image from a slot."""
     img = slotTable.get_image(slotName)
     if img is None:
@@ -17,7 +25,7 @@ def loadImageFromSlot(slotName, slotTable):
     return img
 
 
-def saveImageToSlot(image: Image.Image, slotName, slotTable):
+def saveImageToSlot(image: Image.Image, slotName: str, slotTable: 'ModernSlotTableWidget') -> None:
     """Save image to a slot. For slot15, saves as a new file."""
     if slotName == "slot15":
         # Get the output directory path
@@ -36,7 +44,7 @@ def saveImageToSlot(image: Image.Image, slotName, slotTable):
     slotTable.set_image(slotName, image)
 
 
-def getSlotDependencies(renderPassWidget) -> Set[str]:
+def getSlotDependencies(renderPassWidget: 'RenderPassWidget') -> Set[str]:
     """Get all slot dependencies for a render pass."""
     dependencies = set()
     
@@ -54,7 +62,7 @@ def getSlotDependencies(renderPassWidget) -> Set[str]:
     return dependencies
 
 
-def getSlotOutputs(renderPassWidget) -> Set[str]:
+def getSlotOutputs(renderPassWidget: 'RenderPassWidget') -> Set[str]:
     """Get output slots for a render pass."""
     outputs = set()
     if renderPassWidget.selectedOutput is not None:
@@ -62,7 +70,7 @@ def getSlotOutputs(renderPassWidget) -> Set[str]:
     return outputs
 
 
-def build_dependency_graph(render_pass_widgets) -> Tuple[Dict[int, Set[int]], Dict[str, List[int]]]:
+def build_dependency_graph(render_pass_widgets: List['RenderPassWidget']) -> Tuple[Dict[int, Set[int]], Dict[str, List[int]]]:
     """
     Build dependency graph for render passes.
     Returns: (pass_dependencies, slot_producers)
@@ -90,7 +98,7 @@ def build_dependency_graph(render_pass_widgets) -> Tuple[Dict[int, Set[int]], Di
     return dict(pass_dependencies), dict(slot_producers)
 
 
-def topological_sort(passes: List, dependencies: Dict[int, Set[int]]) -> List[int]:
+def topological_sort(passes: List['RenderPassWidget'], dependencies: Dict[int, Set[int]]) -> List[int]:
     """
     Perform topological sort on render passes based on dependencies.
     Returns ordered list of pass indices.
@@ -126,7 +134,7 @@ def topological_sort(passes: List, dependencies: Dict[int, Set[int]]) -> List[in
     return ordered_indices
 
 
-def run_render_pass(render_pass_widget, slot_table, progress_callback=None):
+def run_render_pass(render_pass_widget: 'RenderPassWidget', slot_table: 'ModernSlotTableWidget', progress_callback: Optional[Callable[[str], None]] = None) -> Optional[Image.Image]:
     """
     Run a single render pass widget with dynamic function loading and progress tracking.
     """
@@ -156,9 +164,7 @@ def run_render_pass(render_pass_widget, slot_table, progress_callback=None):
 
     # Map UI names to function names (aligned with passes.py)
     func_name_map = {
-    "Multiply": "multiply",
-
-    "Multiply": "multiply",
+    "PixelSort": "wrap_sort",
 
     "Multiply": "multiply",
 
@@ -169,8 +175,6 @@ def run_render_pass(render_pass_widget, slot_table, progress_callback=None):
     "Kuwahara": "kuwahara_wrapper",
 
     "Mix Percent": "mix_percent",
-
-    "Kuwahara": "kuwahara_wrapper",
 
     "Alpha Over": "alpha_over",
 
@@ -188,6 +192,8 @@ def run_render_pass(render_pass_widget, slot_table, progress_callback=None):
     
     # Map UI setting names to function parameter names
     setting_name_map = {
+    "Mode": "mode",
+
     "regionsCount": "regions",
 
     "KernelSize": "kernel",
@@ -332,7 +338,7 @@ def run_render_pass(render_pass_widget, slot_table, progress_callback=None):
     return output_img
 
 
-def run_all_render_passes(gui_instance, progress_callback=None):
+def run_all_render_passes(gui_instance: 'GUI', progress_callback: Optional[Callable[[str], None]] = None) -> None:
     """
     Run all render passes in the GUI's list widget in correct order based on dependencies.
     
@@ -405,13 +411,12 @@ def run_all_render_passes(gui_instance, progress_callback=None):
         raise RuntimeError(error_msg)
 
 
-def validate_render_pipeline(gui_instance) -> List[str]:
+def validate_render_pipeline(gui_instance: 'GUI') -> List[str]:
     """
     Validate the render pipeline for potential issues.
     
     Args:
         gui_instance: The main GUI instance
-    
     Returns:
         List of validation warnings/errors
     """

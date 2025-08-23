@@ -1,5 +1,7 @@
 # renderPassSettingsWidget.py
 
+from __future__ import annotations
+from typing import Optional
 from PySide6.QtWidgets import *
 from PySide6.QtCore import Qt
 from superqt import QDoubleSlider, QToggleSwitch, QRangeSlider
@@ -12,7 +14,7 @@ class RenderPassSettingsWidget(QWidget):
     :param settings_config: A list of settings configurations.
     :param parent: The parent widget.
     """
-    def __init__(self, settings_config: list[dict], saved_settings: dict = None, parent=None):
+    def __init__(self, settings_config: list[dict], saved_settings: Optional[dict] = None, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(4, 4, 4, 4)  # Consistent with other widgets

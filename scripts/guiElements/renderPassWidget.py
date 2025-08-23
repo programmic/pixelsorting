@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Optional, Callable
 from PySide6.QtWidgets import *
 from PySide6.QtCore import Qt
 
@@ -20,7 +22,7 @@ class RenderPassWidget(QWidget):
         onSelectSlot (callable): Callback when slot selection is initiated
         onDelete (callable): Callback to remove this widget from GUI
     """
-    def __init__(self, renderpass_type: str, availableSlots: list[str], onSelectSlot, onDelete, onUpdateSlotSource=None, saved_settings: dict = None):
+    def __init__(self, renderpass_type: str, availableSlots: list[str], onSelectSlot: Callable, onDelete: Callable, onUpdateSlotSource: Optional[Callable] = None, saved_settings: Optional[dict] = None):
         super().__init__()
         self.renderpass_type = renderpass_type
         self.availableSlots = availableSlots

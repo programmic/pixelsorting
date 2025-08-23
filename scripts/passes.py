@@ -1,21 +1,25 @@
 # passes.py
+"""Image processing functions for pixel sorting and manipulation."""
 
-from PIL import Image
-import converters
-import math
-import random
-import threading
-import os
-from tqdm import tqdm
-from collections import defaultdict, deque
-import numpy as np
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
-from timing import timing
-from math import exp, pi
-from typing import List, Tuple
-import pyopencl as cl
+from __future__ import annotations
+from typing import List, Tuple, Optional, Union
 import contextlib
+import math
+import os
+import random
 import sys
+import threading
+from collections import defaultdict, deque
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+from math import exp, pi
+
+import numpy as np
+import pyopencl as cl
+from PIL import Image
+from tqdm import tqdm
+
+import converters
+from timing import timing
 
 
 def ensure_rgba(img: Image.Image) -> Image.Image:
@@ -34,7 +38,7 @@ def ensure_rgba(img: Image.Image) -> Image.Image:
         return img.convert('RGBA')
 
 
-def get_pixel_rgba(pixel) -> tuple:
+def get_pixel_rgba(pixel: Union[int, Tuple[int, ...]]) -> Tuple[int, int, int, int]:
     """Get RGBA values from pixel, handling different modes."""
     if isinstance(pixel, int):
         # Grayscale
@@ -51,7 +55,7 @@ def get_pixel_rgba(pixel) -> tuple:
         return (0, 0, 0, 255)
 
 
-def put_pixel_rgba(img: Image.Image, x: int, y: int, rgba: tuple):
+def put_pixel_rgba(img: Image.Image, x: int, y: int, rgba: Tuple[int, int, int, int]) -> None:
     """Put RGBA pixel, handling different image modes."""
     mode = img.mode
     if mode == 'RGBA':
@@ -81,7 +85,7 @@ def suppress_output():
             sys.stderr = old_stderr
 
 
-def scale_image(img: Image.Image, copyImage: Image.Image, downscale: float= 0) -> Image.Image:
+def scale_image(img: Image.Image, copyImage: Image.Image, downscale: float = 0) -> Image.Image:
     if not 0 <= downscale <= 100: raise ValueError("ScaleImageError: Unsupported downscale value")
     
     # Create output image with transparent background (0 alpha)
@@ -123,7 +127,7 @@ def scale_image(img: Image.Image, copyImage: Image.Image, downscale: float= 0) -
     
     return out
 
-def contrast_mask(img: Image.Image, lim_lower, lim_upper):
+def contrast_mask(img: Image.Image, lim_lower: int, lim_upper: int) -> Image.Image:
     out: Image.Image = Image.new("L", img.size)
     lowest = math.inf
     highest = -math.inf
@@ -142,15 +146,7 @@ def contrast_mask(img: Image.Image, lim_lower, lim_upper):
                 out.putpixel((x, y), 0)
     return out
 
-def luminance_mask(img: Image.Image) -> Image.Image:
-    out: Image.Image = Image.new("RGB", img.size)
-    for x in range(img.size[0]):
-        for y in range(img.size[1]):
-            val = math.floor(converters.get_luminance(img.getpixel((x,y))))
-            out.putpixel((x,y), (val, val, val))
-    return out
-
-def luminance_mask(img: Image.Image, mask: Image.Image = None) -> Image.Image:
+def luminance_mask(img: Image.Image, mask: Optional[Image.Image] = None) -> Image.Image:
     out: Image.Image = Image.new("RGB", img.size)
     
     # Convert mask to grayscale if provided
@@ -173,7 +169,7 @@ def luminance_mask(img: Image.Image, mask: Image.Image = None) -> Image.Image:
             out.putpixel((x,y), (val, val, val))
     return out
 
-def get_coherent_image_chunks(img: Image.Image, rotate=False) -> list[list[tuple[int, int]]]:
+def get_coherent_image_chunks(img: Image.Image, rotate: bool = False) -> list[list[tuple[int, int]]]:
     img = img.convert("RGB")
     if rotate: img = img.rotate(90, expand=True)
     width, height = img.size
@@ -222,7 +218,7 @@ def to_vertical_chunks(chunks: list[list[tuple[int, int]]]) -> list[list[tuple[i
         out.extend(v_chunks)
     return out
 
-def split_connected_chunks(v_chunks: list[list[tuple[int, int]]]) -> list[list[tuple[int,int]]]:
+def split_connected_chunks(v_chunks: list[list[tuple[int, int]]]) -> list[list[tuple[int, int]]]:
     out = []
 
     for v_chunk in v_chunks:
@@ -245,7 +241,7 @@ def split_connected_chunks(v_chunks: list[list[tuple[int, int]]]) -> list[list[t
 
     return out
 
-def visualize_chunks(img: Image.Image, chunks, rotate=False):
+def visualize_chunks(img: Image.Image, chunks: list[list[tuple[int, int]]], rotate: bool = False) -> Image.Image:
     out = Image.new("RGB", img.size)
     for chunk in tqdm(chunks, desc="Visualizing chunks"):
         color = tuple(random.randint(0, 255) for _ in range(3))
@@ -294,7 +290,7 @@ def sort(img: Image.Image,
          mode: str = "lum",
          flip_dir: bool = False,
          rotate: bool = True,
-         mask: Image.Image = None
+         mask: Optional[Image.Image] = None
          ) -> Image.Image:
     # Generate chunks from mask if provided, otherwise sort the whole image
     if mask:

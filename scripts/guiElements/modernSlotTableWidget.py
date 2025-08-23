@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (QWidget, QHBoxLayout, QPushButton, QGraphicsDropS
 from PySide6.QtCore import Qt, Signal, QPoint, QSize, QTimer, QRect, QEvent
 from PySide6.QtGui import (QPixmap, QPainter, QBrush, QColor, QPen, QLinearGradient,
                           QPainterPath, QFont, QFontMetrics, QPalette)
-from .modernSlotPreviewWidget import ModernSlotPreviewWidget
+from .modernSlotPreviewWidgetMerged import ModernSlotPreviewWidget
 from .slotContextMenu import SlotContextMenu
 from .previewManager import preview_manager
 import weakref

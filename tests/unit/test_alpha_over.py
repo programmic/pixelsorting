@@ -6,7 +6,6 @@ Test script to verify the alpha_over function fix
 from PIL import Image
 import numpy as np
 from scripts.passes import alpha_over
-from scripts.alpha_over_fix import safe_alpha_over
 
 def create_test_images():
     """Create test images for alpha over testing"""
@@ -52,26 +51,6 @@ def test_alpha_over_basic():
         print(f"✗ Basic alpha over test failed: {e}")
         return False
 
-def test_alpha_over_safe():
-    """Test the safe_alpha_over function"""
-    print("Testing safe_alpha_over functionality...")
-    
-    bg, fg = create_test_images()
-    
-    try:
-        # Test the safe_alpha_over function
-        result = safe_alpha_over(bg, fg)
-        
-        # Verify the result
-        assert result.mode == 'RGBA', f"Expected RGBA mode, got {result.mode}"
-        assert result.size == bg.size, f"Size mismatch: {result.size} vs {bg.size}"
-        
-        print("✓ Safe alpha over test passed!")
-        return True
-        
-    except Exception as e:
-        print(f"✗ Safe alpha over test failed: {e}")
-        return False
 
 def test_size_mismatch():
     """Test handling of size mismatches"""
@@ -115,7 +94,6 @@ def main():
     
     tests = [
         test_alpha_over_basic,
-        test_alpha_over_safe,
         test_size_mismatch,
         test_different_modes
     ]

@@ -1,5 +1,6 @@
 # maskWidget.py
 
+from typing import Callable
 from PySide6.QtWidgets import *
 from superqt import QToggleSwitch
 
@@ -11,7 +12,7 @@ class MaskWidget(QWidget):
     :param on_select_slot: Callback function when a slot is selected.
     :param parent: The parent widget.
     """
-    def __init__(self, available_slots: list[str], on_select_slot, parent=None):
+    def __init__(self, available_slots: list[str], on_select_slot: Callable, parent=None):
         super().__init__(parent)
         self.available_slots = available_slots
         self.on_select_slot = on_select_slot

@@ -38,8 +38,8 @@ class PreviewManager(QObject):
         """Get or create the preview widget."""
         if self._preview_widget is None:
             # Import here to avoid circular imports - use the fixed version
-            from .modernSlotPreviewWidgetFixed import ModernSlotPreviewWidgetFixed
-            self._preview_widget = ModernSlotPreviewWidgetFixed()
+            from .modernSlotPreviewWidgetMerged import ModernSlotPreviewWidget
+            self._preview_widget = ModernSlotPreviewWidget()
             self._active_widgets.add(self._preview_widget)
             
         # Check if widget is still valid
@@ -47,8 +47,8 @@ class PreviewManager(QObject):
             self._preview_widget.isVisible()
         except (RuntimeError, AttributeError):
             # Widget was deleted, recreate
-            from .modernSlotPreviewWidgetFixed import ModernSlotPreviewWidgetFixed
-            self._preview_widget = ModernSlotPreviewWidgetFixed()
+            from .modernSlotPreviewWidgetMerged import ModernSlotPreviewWidget
+            self._preview_widget = ModernSlotPreviewWidget()
             self._active_widgets.add(self._preview_widget)
             
         return self._preview_widget

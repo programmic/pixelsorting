@@ -190,7 +190,7 @@ class GUI(QWidget):
         
         self.updateSlotUsage()
 
-    def on_pass_selected(self, item):
+    def on_pass_selected(self, item: QListWidgetItem):
         renderpass_type = item.text()
         widget = RenderPassWidget(
             renderpass_type,
@@ -205,7 +205,7 @@ class GUI(QWidget):
         lw.addItem(listItem)
         lw.setItemWidget(listItem, widget)
 
-    def removeRenderPass(self, widget):
+    def removeRenderPass(self, widget: RenderPassWidget):
         """
         Remove the render pass widget and its list item from the list.
         """
@@ -247,11 +247,11 @@ class GUI(QWidget):
             self._assigning_imported_image = filename
             QMessageBox.information(self, "Assign Image", "Now click a slot to assign the image to it.")
 
-    def startSlotSelection(self, mode, widget):
+    def startSlotSelection(self, mode: str, widget: RenderPassWidget):
         self.currentSelectionMode = mode
         self.currentWidget = widget
 
-    def onSlotClicked(self, slotName):
+    def onSlotClicked(self, slotName: str):
         if hasattr(self, '_assigning_imported_image'):
             # We're in the process of assigning an imported image
             if slotName in self.original_image_slots:
@@ -299,18 +299,18 @@ class GUI(QWidget):
         self.slotUsage["slot0"] = True  # Original always occupied
         self.slotTable.refreshColors(self.slotUsage)
 
-    def updateSlotSource(self, slot_name, source_info):
+    def updateSlotSource(self, slot_name: str, source_info: str):
         """Update the source information for a slot."""
         self.slotTable.setSlotSource(slot_name, source_info)
 
-    def onSlotLearnRequested(self, slot_name):
+    def onSlotLearnRequested(self, slot_name: str):
         """Handle slot learning via right-click context menu."""
         self.show_message(f"Learning slot: {slot_name}")
         # Here you can implement the actual learning logic
         # For now, we'll just show a message
         QMessageBox.information(self, "Learn Slot", f"Learning slot: {slot_name}")
 
-    def onSlotClearRequested(self, slot_name):
+    def onSlotClearRequested(self, slot_name: str):
         """Handle slot clearing via right-click context menu."""
         if slot_name in self.original_image_slots:
             QMessageBox.warning(self, "Cannot Clear", "Cannot clear original image slot.")
@@ -322,12 +322,12 @@ class GUI(QWidget):
         self.updateSlotUsage()
         self.show_message(f"Cleared slot: {slot_name}")
 
-    def onSlotPreviewRequested(self, slot_name):
+    def onSlotPreviewRequested(self, slot_name: str):
         """Handle slot preview via right-click context menu."""
         try:
             # Force show preview immediately
             if self.slotTable.preview_widget is None:
-                from guiElements.modernSlotPreviewWidget import ModernSlotPreviewWidget
+                from guiElements.modernSlotPreviewWidgetMerged import ModernSlotPreviewWidget
                 self.slotTable.preview_widget = ModernSlotPreviewWidget()
                 
             image = self.slotTable.get_image(slot_name)

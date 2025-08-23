@@ -71,27 +71,6 @@
       "num_inputs": 2
     }
   ],
-  "PixelSort": [
-    {
-      "kategory": "pixelsort",
-      "num_inputs": 1
-    },
-    {
-      "label": "Use vSplitting?",
-      "type": "switch",
-      "default": true
-    },
-    {
-      "label": "Flip Horizontal",
-      "type": "switch",
-      "default": false
-    },
-    {
-      "label": "Flip Vertical",
-      "type": "switch",
-      "default": false
-    }
-  ],
   "Contrast Mask": [
     {
       "kategory": "contrast_mask"
@@ -200,6 +179,27 @@
     },
     {
       "label": "allowValueOverflow",
+      "type": "switch",
+      "default": false
+    }
+  ],
+  "PixelSort": [
+    {
+      "kategory": "pixelsort",
+      "num_inputs": 1
+    },
+    {
+      "label": "vSplitting",
+      "type": "switch",
+      "default": true
+    },
+    {
+      "label": "flipHorz",
+      "type": "switch",
+      "default": false
+    },
+    {
+      "label": "flipVert",
       "type": "switch",
       "default": false
     }

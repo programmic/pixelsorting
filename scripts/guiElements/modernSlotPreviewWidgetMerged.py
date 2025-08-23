@@ -1,23 +1,19 @@
-# modernSlotPreviewWidgetFixed.py
-
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QGraphicsDropShadowEffect,
-                              QHBoxLayout, QPushButton, QGraphicsDropShadowEffect, QApplication)
-from PySide6.QtCore import Qt, QPoint, QRect, QSize, QEvent, QPropertyAnimation
-from PySide6.QtGui import (QPixmap, QPainter, QPainterPath, QBrush, QColor, QPen,
-                          QLinearGradient, QFont)
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QGraphicsDropShadowEffect, QApplication)
+from PySide6.QtCore import Qt, QPoint, QPropertyAnimation, QSize, QEvent
+from PySide6.QtGui import (QPixmap, QPainter, QPainterPath, QBrush, QColor, QPen, QLinearGradient)
 from PIL.ImageQt import ImageQt
 import math
 
 
-class ModernSlotPreviewWidgetFixed(QWidget):
+class ModernSlotPreviewWidget(QWidget):
     """
-    A modern, non-flickering preview widget for slot images with fixed geometry issues.
+    A modern, non-flickering preview widget for slot images with improved geometry handling.
     
     Features:
+    - Smooth fade-in/out animations
     - Proper screen bounds checking
     - Responsive sizing based on content
-    - Fixed positioning logic
-    - Improved lifecycle management
+    - Modern styling with shadows
     """
     
     def __init__(self, parent=None):
@@ -36,7 +32,6 @@ class ModernSlotPreviewWidgetFixed(QWidget):
         
     def _setup_ui(self):
         """Setup the modern UI with responsive sizing."""
-        # Use minimum size instead of fixed size to avoid geometry conflicts
         self.setMinimumSize(200, 180)
         self.setMaximumSize(220, 200)  # Allow some flexibility
         
@@ -47,13 +42,11 @@ class ModernSlotPreviewWidgetFixed(QWidget):
         # Image label
         self.image_label = QLabel()
         self.image_label.setAlignment(Qt.AlignCenter)
-        self.image_label.setStyleSheet("""
-            QLabel {
-                background-color: #2d2d2d;
-                border: 1px solid #555;
-                border-radius: 4px;
-            }
-        """)
+        self.image_label.setStyleSheet("""QLabel {
+            background-color: #2d2d2d;
+            border: 1px solid #555;
+            border-radius: 4px;
+        }""")
         self.image_label.setMinimumSize(188, 140)
         self.image_label.setMaximumSize(200, 160)
         
@@ -61,15 +54,13 @@ class ModernSlotPreviewWidgetFixed(QWidget):
         self.info_label = QLabel()
         self.info_label.setAlignment(Qt.AlignCenter)
         self.info_label.setWordWrap(True)
-        self.info_label.setStyleSheet("""
-            QLabel {
-                color: #cccccc;
-                font-size: 10px;
-                padding: 2px;
-                background-color: rgba(45, 45, 45, 180);
-                border-radius: 3px;
-            }
-        """)
+        self.info_label.setStyleSheet("""QLabel {
+            color: #cccccc;
+            font-size: 10px;
+            padding: 2px;
+            background-color: rgba(45, 45, 45, 180);
+            border-radius: 3px;
+        }""")
         
         self.layout.addWidget(self.image_label)
         self.layout.addWidget(self.info_label)
@@ -107,24 +98,18 @@ class ModernSlotPreviewWidgetFixed(QWidget):
             
     def show_at_position(self, parent_widget, local_pos):
         """Show the preview at the correct position with screen bounds checking."""
-        # Convert to global coordinates
         global_pos = parent_widget.mapToGlobal(local_pos)
-        
-        # Get screen geometry
         screen = parent_widget.screen()
         if screen is None:
             screen = QApplication.primaryScreen()
         screen_rect = screen.availableGeometry()
         
-        # Calculate position with bounds checking
         preview_width = self.width()
         preview_height = self.height()
         
-        # Default position: to the right of cursor
         x = global_pos.x() + 15
         y = global_pos.y() - preview_height // 2
         
-        # Ensure we stay within screen bounds
         if x + preview_width > screen_rect.right():
             x = global_pos.x() - preview_width - 15
             
@@ -134,15 +119,12 @@ class ModernSlotPreviewWidgetFixed(QWidget):
         if y + preview_height > screen_rect.bottom():
             y = screen_rect.bottom() - preview_height - 10
             
-        # Ensure minimum distance from edges
         x = max(screen_rect.left() + 10, min(x, screen_rect.right() - preview_width - 10))
         y = max(screen_rect.top() + 10, min(y, screen_rect.bottom() - preview_height - 10))
         
-        # Position and show
         self.move(x, y)
         self.show()
         
-        # Fade in animation
         self._animation.setStartValue(0.0)
         self._animation.setEndValue(1.0)
         self._animation.start()
@@ -170,7 +152,6 @@ class ModernSlotPreviewWidgetFixed(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         
-        # Draw background
         path = QPainterPath()
         path.addRoundedRect(self.rect(), 6, 6)
         
@@ -180,7 +161,6 @@ class ModernSlotPreviewWidgetFixed(QWidget):
         
         painter.fillPath(path, QBrush(gradient))
         
-        # Border
         painter.setPen(QPen(QColor(100, 100, 100, 200), 1))
         painter.drawPath(path)
         
