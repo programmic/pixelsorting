@@ -45,6 +45,8 @@ class RenderPassWidget(QWidget):
 
         # Create title bar with drag handle and delete button
         top = QHBoxLayout()
+        top.setContentsMargins(4, 4, 4, 4)  # Standardized margins
+        top.setSpacing(4)  # Consistent spacing
         self.dragBar = QLabel("☰")
         self.dragBar.setFixedWidth(20)
         self.dragBar.setAlignment(Qt.AlignCenter)
@@ -89,6 +91,8 @@ class RenderPassWidget(QWidget):
         self.outputLabel.mousePressEvent = self._on_output_click
         self.ioLayout.addWidget(self.outputLabel)
         
+        self.ioLayout.setContentsMargins(4, 4, 4, 4)  # Standardized margins
+        self.ioLayout.setSpacing(4)  # Consistent spacing
         self.mainLayout.addLayout(self.ioLayout)
 
         # Settings configuration
@@ -196,6 +200,14 @@ class RenderPassWidget(QWidget):
         Retrieve current settings from the settings widget.
         """
         settings = self.settingsWidget.get_values()
+        
+        # Include input/output slots
+        settings['inputs'] = self.selectedInputs
+        settings['output'] = self.selectedOutput
+        
+        # Include mask settings
+        settings['mask'] = self.maskWidget.get_values()
+        
         return settings
 
     def load_settings(self, settings_dict):

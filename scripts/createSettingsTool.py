@@ -112,6 +112,11 @@ def update_json_config(ui_name: str, settings: List[Dict[str, Any]], num_inputs:
     except FileNotFoundError:
         config = {}
     
+    # Remove existing pass if it already exists
+    if ui_name in config:
+        print(f"Removing existing pass '{ui_name}' to replace with new configuration...")
+        del config[ui_name]
+    
     # Add category with number of inputs as first setting
     category = ui_name.lower().replace(" ", "_")
     settings.insert(0, {

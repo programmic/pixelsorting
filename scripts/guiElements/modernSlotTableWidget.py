@@ -192,6 +192,10 @@ class ModernSlotTableWidget(QWidget):
         self.setAcceptDrops(True)
         self.setMouseTracking(True)  # Enable mouse tracking for hover preview
         
+        # Ensure all buttons accept drops
+        for slot_name, btn in self.buttons:
+            btn.setAcceptDrops(True)
+        
         # Cache for images
         self._image_cache = {}
         
@@ -309,7 +313,35 @@ class ModernSlotTableWidget(QWidget):
         """Accept drag events with visual feedback."""
         if event.mimeData().hasText():
             event.acceptProposedAction()
-            self.setStyleSheet("ModernSlotTableWidget { border: 2px dashed #4caf50; }")
+            self.setStyleSheet("""
+                ModernSlotTableWidget { 
+                    border: 2px dashed #4caf50; 
+                    background-color: rgba(76, 175, 80, 0.1);
+                }
+            """)
+        else:
+            event.ignore()
+            
+    def dragMoveEvent(self, event):
+        """Handle drag move events to provide visual feedback."""
+        if event.mimeData().hasText():
+            event.acceptProposedAction()
+            
+            # Check if we're over any button
+            drop_pos = event.pos()
+            for slot_name, btn in self.buttons:
+                btn_pos = btn.mapFrom(self, drop_pos)
+                if btn.rect().contains(btn_pos):
+                    # Highlight the button under cursor
+                    btn.setStyleSheet("""
+                        QPushButton {
+                            border: 2px solid #4caf50;
+                            background-color: rgba(76, 175, 80, 0.2);
+                        }
+                    """)
+                else:
+                    # Reset other buttons
+                    btn.setStyleSheet("")
         else:
             event.ignore()
             
@@ -317,6 +349,9 @@ class ModernSlotTableWidget(QWidget):
         """Reset visual feedback on drag leave."""
         super().dragLeaveEvent(event)
         self.setStyleSheet("")
+        # Reset all button styles
+        for slot_name, btn in self.buttons:
+            btn.setStyleSheet("")
         
     def dropEvent(self, event):
         """Handle drop events with proper positioning."""
@@ -324,21 +359,40 @@ class ModernSlotTableWidget(QWidget):
         
         # Find which button was dropped on
         for slot_name, btn in self.buttons:
-            if btn.geometry().contains(drop_pos):
-                filename = event.mimeData().text()
-                
-                # Find parent with imported_images
-                parent = self.parent()
-                while parent and not hasattr(parent, 'imported_images'):
-                    parent = parent.parent()
+            # Convert drop position to button coordinates
+            btn_pos = btn.mapFrom(self, drop_pos)
+            if btn.rect().contains(btn_pos):
+                if event.mimeData().hasText():
+                    filename = event.mimeData().text()
                     
-                if parent and hasattr(parent, 'imported_images') and filename in parent.imported_images:
-                    image = parent.imported_images[filename]
-                    self.set_image(slot_name, image)
-                    self.image_dropped.emit(slot_name, image)
-                    event.acceptProposedAction()
-                else:
-                    event.ignore()
+                    # Get the main GUI instance through window()
+                    main_gui = self.window()
+                    if hasattr(main_gui, 'imported_images') and filename in main_gui.imported_images:
+                        image = main_gui.imported_images[filename]
+                        self.set_image(slot_name, image)
+                        self.image_dropped.emit(slot_name, image)
+                        event.acceptProposedAction()
+                        self.setStyleSheet("")
+                        return
+                    else:
+                        # Try alternative method to find imported images
+                        parent = self.parent()
+                        while parent:
+                            if hasattr(parent, 'imported_images'):
+                                if filename in parent.imported_images:
+                                    image = parent.imported_images[filename]
+                                    self.set_image(slot_name, image)
+                                    self.image_dropped.emit(slot_name, image)
+                                    event.acceptProposedAction()
+                                    self.setStyleSheet("")
+                                    return
+                                break
+                            parent = parent.parent()
+                        
+                        # If we get here, the image wasn't found
+                        print(f"Warning: Image '{filename}' not found in imported images")
+                
+                event.ignore()
                 break
                 
         self.setStyleSheet("")

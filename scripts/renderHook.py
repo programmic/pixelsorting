@@ -156,6 +156,24 @@ def run_render_pass(render_pass_widget, slot_table, progress_callback=None):
 
     # Map UI names to function names (aligned with passes.py)
     func_name_map = {
+    "Multiply": "multiply",
+
+    "Multiply": "multiply",
+
+    "Multiply": "multiply",
+
+    "Add (Clamp Maximum)": "maxAdd",
+
+    "Difference": "difference",
+
+    "Kuwahara": "kuwahara_wrapper",
+
+    "Mix Percent": "mix_percent",
+
+    "Kuwahara": "kuwahara_wrapper",
+
+    "Alpha Over": "alpha_over",
+
         "Mix By Percent": "mix_by_percent",
         "Blur": "blur",
         "Invert": "invert",
@@ -170,6 +188,14 @@ def run_render_pass(render_pass_widget, slot_table, progress_callback=None):
     
     # Map UI setting names to function parameter names
     setting_name_map = {
+    "regionsCount": "regions",
+
+    "KernelSize": "kernel",
+
+    "%": "p",
+
+    "Region count*": "regions",
+
         # Blur settings
         "Blur Type": "blur_type",
         "Blur Kernel": "blur_kernel",

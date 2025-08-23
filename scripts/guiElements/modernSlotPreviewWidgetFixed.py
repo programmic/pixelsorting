@@ -36,7 +36,9 @@ class ModernSlotPreviewWidgetFixed(QWidget):
         
     def _setup_ui(self):
         """Setup the modern UI with responsive sizing."""
-        self.setFixedSize(200, 180)  # Reduced size to fit most screens
+        # Use minimum size instead of fixed size to avoid geometry conflicts
+        self.setMinimumSize(200, 180)
+        self.setMaximumSize(220, 200)  # Allow some flexibility
         
         # Main layout
         self.layout = QVBoxLayout(self)
@@ -52,7 +54,8 @@ class ModernSlotPreviewWidgetFixed(QWidget):
                 border-radius: 4px;
             }
         """)
-        self.image_label.setFixedSize(188, 140)
+        self.image_label.setMinimumSize(188, 140)
+        self.image_label.setMaximumSize(200, 160)
         
         # Info label
         self.info_label = QLabel()

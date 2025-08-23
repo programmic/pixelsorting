@@ -37,16 +37,17 @@ class ModernSlotPreviewWidget(QWidget):
         
     def _setup_ui(self):
         """Setup the modern UI."""
-        #self.setFixedSize(220, 220)
+        # Set unified fixed size to prevent geometry errors
+        self.setFixedSize(220, 220)
         
         # Main layout
         self.layout = QVBoxLayout(self)
-
         self.layout.setContentsMargins(8, 8, 8, 8)
         
-        # Image label
+        # Image label with fixed size
         self.image_label = QLabel()
         self.image_label.setAlignment(Qt.AlignCenter)
+        self.image_label.setFixedSize(200, 160)
         self.image_label.setStyleSheet("""
             QLabel {
                 background-color: #2d2d2d;
@@ -54,13 +55,12 @@ class ModernSlotPreviewWidget(QWidget):
                 border-radius: 4px;
             }
         """)
-        #self.image_label.setFixedSize(200, 160)
         
-        # Info label
+        # Info label with constrained size
         self.info_label = QLabel()
-
         self.info_label.setAlignment(Qt.AlignCenter)
         self.info_label.setWordWrap(True)
+        self.info_label.setFixedWidth(200)
         self.info_label.setStyleSheet("""
             QLabel {
                 color: #cccccc;
@@ -109,69 +109,78 @@ class ModernSlotPreviewWidget(QWidget):
             
     def show_at_position(self, parent_widget, local_pos):
         """Show the preview at the correct position avoiding screen edges."""
-        # Convert to global coordinates
-        global_pos = parent_widget.mapToGlobal(local_pos)
-        
-        # Get screen geometry
-        screen = parent_widget.screen()
-        screen_rect = screen.availableGeometry()
-        
-        # Calculate position
-        preview_width = self.width()
-        preview_height = self.height()
-        
-        # Default position: to the right of cursor
-        x = global_pos.x() + 15
-        y = global_pos.y() - preview_height // 2
-        
-        # Adjust if off screen
-        if x + preview_width > screen_rect.right():
-            x = global_pos.x() - preview_width - 15
+        try:
+            # Convert to global coordinates
+            global_pos = parent_widget.mapToGlobal(local_pos)
             
-        if y < screen_rect.top():
-            y = screen_rect.top() + 10
+            # Get screen geometry
+            screen = parent_widget.screen()
+            screen_rect = screen.availableGeometry()
             
-        if y + preview_height > screen_rect.bottom():
-            y = screen_rect.bottom() - preview_height - 10
+            # Calculate position with safety margins
+            preview_width = max(200, self.width())  # Ensure minimum size
+            preview_height = max(150, self.height())
             
-        # Position and show with animation
-        self.move(x, y)
-        self.show()
-
-        # Connect leaveEvent to hide the preview
-        # parent_widget.leaveEvent.connect(self.hide)
-        
-        # Fade in
-
-
-        self._animation.setStartValue(0.0)
-        self._animation.setEndValue(1.0)
-        self._animation_active = True
-        self._animation.start()
+            # Default position: to the right of cursor
+            x = global_pos.x() + 15
+            y = global_pos.y() - preview_height // 2
+            
+            # Adjust if off screen with safety margins
+            margin = 10
+            if x + preview_width > screen_rect.right() - margin:
+                x = global_pos.x() - preview_width - 15
+                
+            if y < screen_rect.top() + margin:
+                y = screen_rect.top() + margin
+                
+            if y + preview_height > screen_rect.bottom() - margin:
+                y = screen_rect.bottom() - preview_height - margin
+                
+            # Ensure position is within screen bounds
+            x = max(screen_rect.left() + margin, min(x, screen_rect.right() - preview_width - margin))
+            y = max(screen_rect.top() + margin, min(y, screen_rect.bottom() - preview_height - margin))
+            
+            # Position and show with animation
+            self.move(x, y)
+            self.show()
+            
+            # Fade in
+            self._animation.setStartValue(0.0)
+            self._animation.setEndValue(1.0)
+            self._animation_active = True
+            self._animation.start()
+            
+        except (RuntimeError, AttributeError):
+            # Widget or parent was deleted, ignore
+            pass
         
     def hide(self):
         """Hide with fade out animation."""
-        if not self.isVisible() or self._animation_active:
-            return
-            
-        self._animation_active = True
-        self._animation.setStartValue(1.0)
-        self._animation.setEndValue(0.0)
-        
-        # Disconnect any existing connections first
         try:
-            self._animation.finished.disconnect()
-        except:
+            if not self.isVisible() or self._animation_active:
+                return
+                
+            self._animation_active = True
+            self._animation.setStartValue(1.0)
+            self._animation.setEndValue(0.0)
+            
+            # Disconnect any existing connections first
+            try:
+                self._animation.finished.disconnect()
+            except:
+                pass
+                
+            self._animation.finished.connect(self._close_after_animation)
+            self._animation.start()
+        except (RuntimeError, AttributeError):
+            # Widget already deleted, ignore
             pass
             
-        self._animation.finished.connect(self._close_after_animation)
-        self._animation.start()
-        
     def _close_after_animation(self):
         """Close after fade out with safety checks."""
         try:
             # Check if widget still exists
-            if self and self.isVisible():
+            if self and hasattr(self, 'isVisible') and self.isVisible():
                 super().hide()
                 # Don't call close() to prevent deletion issues
                 # Let parent manage lifecycle
@@ -219,6 +228,10 @@ class ModernSlotPreviewWidget(QWidget):
             pass
 
     def eventFilter(self, watched, event):
-        if event.type() == QEvent.Leave:
-            self.hide()
+        try:
+            if event.type() == QEvent.Leave:
+                self.hide()
+        except (RuntimeError, AttributeError):
+            # Widget already deleted, ignore
+            pass
         return super().eventFilter(watched, event)

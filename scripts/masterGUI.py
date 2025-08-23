@@ -398,21 +398,35 @@ class GUI(QWidget):
         QTimer.singleShot(3000, self.status_label.hide)
 
     def select_image(self):
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Select Image File", "",
-            "Images (*.png *.jpg *.jpeg *.bmp *.gif);;All Files (*.*)")
+        file_paths, _ = QFileDialog.getOpenFileNames(
+            self, "Select Image Files", "",
+            "Images (*.png *.jpg *.jpeg *.bmp *.gif *.tiff *.tif *.webp);;All Files (*.*)")
             
-        if file_path:
-            try:
-                image = Image.open(file_path).convert("RGB")
-                filename = os.path.basename(file_path)
-                self.imported_images[filename] = image
-                self.imported_images_list.addImage(filename, image)
-                self.show_message(f"Successfully imported image: {filename} - Drag to any slot to assign")
-            except Exception as e:
-                error_msg = f"Failed to load image: {str(e)}"
+        if file_paths:
+            imported_count = 0
+            failed_files = []
+            
+            for file_path in file_paths:
+                try:
+                    image = Image.open(file_path).convert("RGB")
+                    filename = os.path.basename(file_path)
+                    self.imported_images[filename] = image
+                    self.imported_images_list.addImage(filename, image)
+                    imported_count += 1
+                except Exception as e:
+                    failed_files.append(f"{os.path.basename(file_path)}: {str(e)}")
+            
+            # Show feedback
+            if imported_count > 0:
+                message = f"Successfully imported {imported_count} image(s)"
+                if failed_files:
+                    message += f", {len(failed_files)} failed"
+                self.show_message(message)
+                
+            if failed_files:
+                error_msg = f"Failed to import:\n" + "\n".join(failed_files)
                 self.show_message(error_msg)
-                QMessageBox.critical(self, "Error", error_msg)
+                QMessageBox.critical(self, "Import Error", error_msg)
 
     def saveProject(self):
         """Save the current project configuration to a JSON file."""

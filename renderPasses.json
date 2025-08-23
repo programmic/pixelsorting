@@ -1,16 +1,4 @@
 {
-  "Mix By Percent": [
-    {
-      "kategory": "mix"
-    },
-    {
-      "label": "Mix Factor",
-      "type": "slider",
-      "min": 0.0,
-      "max": 100.0,
-      "default": 50.0
-    }
-  ],
   "Blur": [
     {
       "kategory": "blur"
@@ -57,18 +45,6 @@
       "min": 0.0,
       "max": 100.0,
       "default": 100.0
-    }
-  ],
-  "kuwaharaGPU": [
-    {
-      "kategory": "kuwahara"
-    },
-    {
-      "label": "kernel_size",
-      "type": "slider",
-      "min": 2.0,
-      "max": 64.0,
-      "default": 8.0
     }
   ],
   "Mix Screen": [
@@ -118,7 +94,7 @@
   ],
   "Contrast Mask": [
     {
-      "kategory": "mask"
+      "kategory": "contrast_mask"
     },
     {
       "label": "Luminance Range",
@@ -143,6 +119,89 @@
       "max": 100.0,
       "default": 0.0,
       "integer": false
+    }
+  ],
+  "Alpha Over": [
+    {
+      "kategory": "alpha_over",
+      "num_inputs": 2
+    }
+  ],
+  "Mix Percent": [
+    {
+      "kategory": "mix_percent",
+      "num_inputs": 2
+    },
+    {
+      "label": "%",
+      "type": "slider",
+      "min": 0.0,
+      "max": 100.0,
+      "default": 50.0,
+      "integer": true
+    }
+  ],
+  "Kuwahara": [
+    {
+      "kategory": "kuwahara",
+      "num_inputs": 1
+    },
+    {
+      "label": "KernelSize",
+      "type": "slider",
+      "min": 1.0,
+      "max": 64.0,
+      "default": 4.0,
+      "integer": true
+    },
+    {
+      "label": "isAnisotropic",
+      "type": "switch",
+      "default": false
+    },
+    {
+      "label": "regionsCount",
+      "type": "slider",
+      "min": 3.0,
+      "max": 16.0,
+      "default": 8.0,
+      "integer": true
+    },
+    {
+      "label": "stylePapari",
+      "type": "switch",
+      "default": false
+    }
+  ],
+  "Difference": [
+    {
+      "kategory": "difference",
+      "num_inputs": 2
+    }
+  ],
+  "Add (Clamp Maximum)": [
+    {
+      "kategory": "add_(clamp_maximum)",
+      "num_inputs": 2
+    }
+  ],
+  "Multiply": [
+    {
+      "kategory": "multiply",
+      "num_inputs": 1
+    },
+    {
+      "label": "factor",
+      "type": "slider",
+      "min": 0.0,
+      "max": 5.0,
+      "default": 1.1,
+      "integer": false
+    },
+    {
+      "label": "allowValueOverflow",
+      "type": "switch",
+      "default": false
     }
   ]
 }

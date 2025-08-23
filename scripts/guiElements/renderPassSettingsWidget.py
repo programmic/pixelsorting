@@ -15,14 +15,16 @@ class RenderPassSettingsWidget(QWidget):
     def __init__(self, settings_config: list[dict], saved_settings: dict = None, parent=None):
         super().__init__(parent)
         self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.setContentsMargins(4, 4, 4, 4)  # Consistent with other widgets
+        self.layout.setSpacing(4)  # Add consistent spacing
         self.controls = {}
         self.settings_config = settings_config
         
         # Track consecutive switches to stack horizontally
         switch_group = QWidget()
         switch_layout = QHBoxLayout()
-        switch_layout.setContentsMargins(0, 0, 0, 0)
+        switch_layout.setContentsMargins(4, 4, 4, 4)  # Standardized margins
+        switch_layout.setSpacing(4)  # Consistent spacing
         switch_group.setLayout(switch_layout)
         switch_count = 0
 
@@ -147,16 +149,39 @@ class RenderPassSettingsWidget(QWidget):
                         # Use min/max as default range
                         slider.setValue((setting.get("min", 0), setting.get("max", 100)))
                     
-                    # Create labels for range display
-                    lower_label = QLabel(f"Min: {slider.value()[0]:.1f}")
-                    upper_label = QLabel(f"Max: {slider.value()[1]:.1f}")
+                    # Create editable value fields for range display
+                    lower_edit = QLineEdit(f"{slider.value()[0]:.1f}")
+                    upper_edit = QLineEdit(f"{slider.value()[1]:.1f}")
+                    lower_edit.setFixedWidth(60)
+                    upper_edit.setFixedWidth(60)
+                    lower_edit.setAlignment(Qt.AlignCenter)
+                    upper_edit.setAlignment(Qt.AlignCenter)
                     
-                    def update_range_labels(values):
+                    def update_range_from_text():
+                        try:
+                            new_lower = float(lower_edit.text())
+                            new_upper = float(upper_edit.text())
+                            if slider.minimum() <= new_lower <= new_upper <= slider.maximum():
+                                slider.setValue((new_lower, new_upper))
+                            else:
+                                # Reset to current values if invalid
+                                current_lower, current_upper = slider.value()
+                                lower_edit.setText(f"{current_lower:.1f}")
+                                upper_edit.setText(f"{current_upper:.1f}")
+                        except ValueError:
+                            # Reset to current values if invalid input
+                            current_lower, current_upper = slider.value()
+                            lower_edit.setText(f"{current_lower:.1f}")
+                            upper_edit.setText(f"{current_upper:.1f}")
+                    
+                    def update_text_from_range(values):
                         lower, upper = values
-                        lower_label.setText(f"Min: {lower:.1f}")
-                        upper_label.setText(f"Max: {upper:.1f}")
+                        lower_edit.setText(f"{lower:.1f}")
+                        upper_edit.setText(f"{upper:.1f}")
                     
-                    slider.valueChanged.connect(update_range_labels)
+                    lower_edit.editingFinished.connect(update_range_from_text)
+                    upper_edit.editingFinished.connect(update_range_from_text)
+                    slider.valueChanged.connect(update_text_from_range)
                     
                     # Create + and - buttons for fine-tuning
                     minus_btn = QPushButton("-")
@@ -180,9 +205,11 @@ class RenderPassSettingsWidget(QWidget):
                     plus_btn.clicked.connect(increment_range)
                     
                     h_slider_layout = QHBoxLayout()
-                    h_slider_layout.addWidget(lower_label)
+                    h_slider_layout.setContentsMargins(4, 4, 4, 4)  # Standardized margins
+                    h_slider_layout.setSpacing(4)  # Consistent spacing
+                    h_slider_layout.addWidget(lower_edit)
                     h_slider_layout.addWidget(slider)
-                    h_slider_layout.addWidget(upper_label)
+                    h_slider_layout.addWidget(upper_edit)
                     h_slider_layout.addWidget(minus_btn)
                     h_slider_layout.addWidget(plus_btn)
                     
@@ -199,9 +226,26 @@ class RenderPassSettingsWidget(QWidget):
                     slider.setValue(float(default_value) if default_value is not None else 0)
                     slider.setSingleStep(0.1)
                     
-                    value_label = QLabel(str(slider.value()))
-                    value_label.setFixedWidth(50)
-                    slider.valueChanged.connect(lambda v, l=value_label: l.setText(str(v)))
+                    # Create editable value field with float formatting
+                    value_edit = QLineEdit(f"{slider.value():.2f}")
+                    value_edit.setFixedWidth(60)
+                    value_edit.setAlignment(Qt.AlignCenter)
+                    
+                    def update_slider_from_text():
+                        try:
+                            new_value = float(value_edit.text())
+                            if slider.minimum() <= new_value <= slider.maximum():
+                                slider.setValue(new_value)
+                            else:
+                                value_edit.setText(f"{slider.value():.2f}")
+                        except ValueError:
+                            value_edit.setText(f"{slider.value():.2f}")
+                    
+                    def update_text_from_slider(value):
+                        value_edit.setText(f"{value:.2f}")
+                    
+                    value_edit.editingFinished.connect(update_slider_from_text)
+                    slider.valueChanged.connect(update_text_from_slider)
                     
                     # Create + and - buttons for fine-tuning
                     minus_btn = QPushButton("-")
@@ -221,8 +265,10 @@ class RenderPassSettingsWidget(QWidget):
                     plus_btn.clicked.connect(increment_value)
                     
                     h_slider_layout = QHBoxLayout()
+                    h_slider_layout.setContentsMargins(4, 4, 4, 4)  # Standardized margins
+                    h_slider_layout.setSpacing(4)  # Consistent spacing
                     h_slider_layout.addWidget(slider)
-                    h_slider_layout.addWidget(value_label)
+                    h_slider_layout.addWidget(value_edit)
                     h_slider_layout.addWidget(minus_btn)
                     h_slider_layout.addWidget(plus_btn)
                     
@@ -232,17 +278,67 @@ class RenderPassSettingsWidget(QWidget):
                     
                     self.controls[label_text] = slider
                 else:
-                    slider = QSlider(Qt.Horizontal)
-                    slider.setMinimum(setting.get("min", 0))
-                    slider.setMaximum(setting.get("max", 100))
-                    slider.setValue(int(float(default_value)) if default_value is not None else 0)
+                    # Determine if this is an integer or float slider
+                    is_integer = setting.get("integer", False)
+                    min_val = setting.get("min", 0)
+                    max_val = setting.get("max", 100)
                     
-                    if setting.get("integer", False):
+                    if is_integer:
+                        slider = QSlider(Qt.Horizontal)
+                        slider.setMinimum(int(min_val))
+                        slider.setMaximum(int(max_val))
+                        slider.setValue(int(float(default_value)) if default_value is not None else 0)
                         slider.setSingleStep(1)
-                    
-                    value_label = QLabel(str(slider.value()))
-                    value_label.setFixedWidth(50)
-                    slider.valueChanged.connect(lambda v, l=value_label: l.setText(str(v)))
+                        
+                        # Create editable value field
+                        value_edit = QLineEdit(str(slider.value()))
+                        value_edit.setFixedWidth(60)
+                        value_edit.setAlignment(Qt.AlignCenter)
+                        
+                        def update_slider_from_text():
+                            try:
+                                new_value = int(value_edit.text())
+                                if min_val <= new_value <= max_val:
+                                    slider.setValue(new_value)
+                                else:
+                                    value_edit.setText(str(slider.value()))
+                            except ValueError:
+                                value_edit.setText(str(slider.value()))
+                        
+                        def update_text_from_slider(value):
+                            value_edit.setText(str(value))
+                        
+                        value_edit.editingFinished.connect(update_slider_from_text)
+                        slider.valueChanged.connect(update_text_from_slider)
+                        
+                    else:
+                        # Float slider - use QDoubleSlider for better precision
+                        slider = QDoubleSlider(Qt.Horizontal)
+                        slider.setMinimum(min_val)
+                        slider.setMaximum(max_val)
+                        slider.setValue(float(default_value) if default_value is not None else 0)
+                        slider.setSingleStep(0.1)
+                        
+                        # Create editable value field with float formatting
+                        value_edit = QLineEdit(f"{slider.value():.2f}")
+                        value_edit.setFixedWidth(60)
+                        value_edit.setAlignment(Qt.AlignCenter)
+                        
+                        def update_slider_from_text():
+                            try:
+                                new_value = float(value_edit.text())
+                                if min_val <= new_value <= max_val:
+                                    slider.setValue(new_value)
+                                else:
+                                    value_edit.setText(f"{slider.value():.2f}")
+                            except ValueError:
+                                value_edit.setText(f"{slider.value():.2f}")
+                        
+                        def update_text_from_slider(value):
+                            value_edit.setText(f"{value:.2f}")
+                        
+                        value_edit.editingFinished.connect(update_slider_from_text)
+                        slider.valueChanged.connect(update_text_from_slider)
                     
                     # Create + and - buttons for fine-tuning
                     minus_btn = QPushButton("-")
@@ -251,19 +347,27 @@ class RenderPassSettingsWidget(QWidget):
                     plus_btn.setFixedSize(25, 25)
                     
                     def decrement_value():
-                        new_value = max(slider.value() - 1, slider.minimum())
+                        if is_integer:
+                            new_value = max(slider.value() - 1, slider.minimum())
+                        else:
+                            new_value = max(slider.value() - 0.1, slider.minimum())
                         slider.setValue(new_value)
                     
                     def increment_value():
-                        new_value = min(slider.value() + 1, slider.maximum())
+                        if is_integer:
+                            new_value = min(slider.value() + 1, slider.maximum())
+                        else:
+                            new_value = min(slider.value() + 0.1, slider.maximum())
                         slider.setValue(new_value)
                     
                     minus_btn.clicked.connect(decrement_value)
                     plus_btn.clicked.connect(increment_value)
                     
                     h_slider_layout = QHBoxLayout()
+                    h_slider_layout.setContentsMargins(4, 4, 4, 4)  # Standardized margins
+                    h_slider_layout.setSpacing(4)  # Consistent spacing
                     h_slider_layout.addWidget(slider)
-                    h_slider_layout.addWidget(value_label)
+                    h_slider_layout.addWidget(value_edit)
                     h_slider_layout.addWidget(minus_btn)
                     h_slider_layout.addWidget(plus_btn)
                     
@@ -325,7 +429,15 @@ class RenderPassSettingsWidget(QWidget):
                 elif isinstance(control, QToggleSwitch):
                     control.setChecked(bool(val))
                 elif isinstance(control, QSlider):
-                    control.setValue(int(float(val)))
+                    # Check if this is actually a QDoubleSlider (which inherits from QSlider)
+                    if hasattr(control, 'setValue') and hasattr(control, 'minimum') and hasattr(control, 'maximum'):
+                        # Try to determine if this should be a float value
+                        try:
+                            float_val = float(val)
+                            control.setValue(float_val)
+                        except (ValueError, TypeError):
+                            # Fall back to integer conversion for compatibility
+                            control.setValue(int(float(val)))
                 elif isinstance(control, QDoubleSlider):
                     control.setValue(float(val))
                 elif isinstance(control, QRangeSlider):

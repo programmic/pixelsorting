@@ -37,9 +37,9 @@ class PreviewManager(QObject):
     def get_preview_widget(self):
         """Get or create the preview widget."""
         if self._preview_widget is None:
-            # Import here to avoid circular imports
-            from .modernSlotPreviewWidget import ModernSlotPreviewWidget
-            self._preview_widget = ModernSlotPreviewWidget()
+            # Import here to avoid circular imports - use the fixed version
+            from .modernSlotPreviewWidgetFixed import ModernSlotPreviewWidgetFixed
+            self._preview_widget = ModernSlotPreviewWidgetFixed()
             self._active_widgets.add(self._preview_widget)
             
         # Check if widget is still valid
@@ -47,8 +47,8 @@ class PreviewManager(QObject):
             self._preview_widget.isVisible()
         except (RuntimeError, AttributeError):
             # Widget was deleted, recreate
-            from .modernSlotPreviewWidget import ModernSlotPreviewWidget
-            self._preview_widget = ModernSlotPreviewWidget()
+            from .modernSlotPreviewWidgetFixed import ModernSlotPreviewWidgetFixed
+            self._preview_widget = ModernSlotPreviewWidgetFixed()
             self._active_widgets.add(self._preview_widget)
             
         return self._preview_widget
@@ -88,12 +88,16 @@ class PreviewManager(QObject):
             
     def _delayed_hide(self):
         """Actually hide the preview."""
-        if self._preview_widget is not None and self._preview_widget.isVisible():
+        if self._preview_widget is not None:
             try:
-                self._preview_widget.deleteLater()
+                # Check if widget is still valid before accessing
+                if hasattr(self._preview_widget, 'isVisible'):
+                    if self._preview_widget.isVisible():
+                        self._preview_widget.hide()
+                        self._preview_widget.deleteLater()
                 self._is_showing = False
             except (RuntimeError, AttributeError):
-                # Widget was deleted
+                # Widget was deleted, reset reference
                 self._preview_widget = None
                 
     def is_showing(self):

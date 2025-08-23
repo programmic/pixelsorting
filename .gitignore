@@ -4,6 +4,8 @@ __pycache__/
 *.pyc
 *.pyo
 *.log
+.qodo
+.pytest_cache
 .vscode/settings.json
 temp_input.png
 temp_preview_input.png
