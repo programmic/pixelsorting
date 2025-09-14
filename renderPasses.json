@@ -1,192 +1,68 @@
 {
-  "Blur": [
+  "Generate Mask (Contrast)": [
     {
-      "kategory": "blur"
+      "kategory": "generate_mask_(contrast)",
+      "num_inputs": 1,
+      "original_func_name": "generate_contrast_mask"
     },
     {
-      "label": "Blur Type",
-      "type": "radio",
-      "options": [
-        "Box",
-        "Gaussian"
-      ],
-      "default": "Box"
-    },
-    {
-      "label": "Blur Kernel",
-      "type": "slider",
-      "min": 1.0,
-      "max": 64.0,
-      "default": 8.0,
-      "integer": true
-    }
-  ],
-  "Invert": [
-    {
-      "kategory": "invert"
-    },
-    {
-      "label": "Invert type",
-      "type": "radio",
-      "options": [
-        "Luminance",
-        "R",
-        "G",
-        "B",
-        "RG",
-        "GB",
-        "RB"
-      ],
-      "default": "Luminance"
-    },
-    {
-      "label": "Impact Factor",
-      "type": "slider",
+      "label": "min / max",
+      "type": "multislider",
       "min": 0.0,
-      "max": 100.0,
-      "default": 100.0
-    }
-  ],
-  "Mix Screen": [
-    {
-      "kategory": "mix",
-      "num_inputs": 2
-    }
-  ],
-  "Cristalline Growth": [
-    {
-      "kategory": "cristalline_growth"
-    },
-    {
-      "label": "Cluster Seeds (%)",
-      "type": "slider",
-      "min": 1.0,
-      "max": 100.0,
-      "default": 30.0
-    }
-  ],
-  "Subtract Images": [
-    {
-      "kategory": "subtract_images",
-      "num_inputs": 2
-    }
-  ],
-  "Contrast Mask": [
-    {
-      "kategory": "contrast_mask"
-    },
-    {
-      "label": "Luminance Range",
-      "type": "dualslider",
-      "min": 0,
-      "max": 255,
+      "max": 255.0,
       "default": [
-        50,
-        200
-      ]
-    }
-  ],
-  "Scale to fit": [
-    {
-      "kategory": "scale_to_fit",
-      "num_inputs": 2
-    },
-    {
-      "label": "Downscale [%]",
-      "type": "slider",
-      "min": 0.0,
-      "max": 100.0,
-      "default": 0.0,
-      "integer": false
-    }
-  ],
-  "Alpha Over": [
-    {
-      "kategory": "alpha_over",
-      "num_inputs": 2
-    }
-  ],
-  "Mix Percent": [
-    {
-      "kategory": "mix_percent",
-      "num_inputs": 2
-    },
-    {
-      "label": "%",
-      "type": "slider",
-      "min": 0.0,
-      "max": 100.0,
-      "default": 50.0,
-      "integer": true
-    }
-  ],
-  "Kuwahara": [
-    {
-      "kategory": "kuwahara",
-      "num_inputs": 1
-    },
-    {
-      "label": "KernelSize",
-      "type": "slider",
-      "min": 1.0,
-      "max": 64.0,
-      "default": 4.0,
+        60.0,
+        120.0
+      ],
       "integer": true
     },
     {
-      "label": "isAnisotropic",
-      "type": "switch",
-      "default": false
-    },
-    {
-      "label": "regionsCount",
-      "type": "slider",
-      "min": 3.0,
-      "max": 16.0,
-      "default": 8.0,
-      "integer": true
-    },
-    {
-      "label": "stylePapari",
-      "type": "switch",
-      "default": false
+      "original_func_name": "generate_contrast_mask"
     }
   ],
-  "Difference": [
+  "Generate Mask (Luminance)": [
     {
-      "kategory": "difference",
-      "num_inputs": 2
-    }
-  ],
-  "Add (Clamp Maximum)": [
-    {
-      "kategory": "add_(clamp_maximum)",
-      "num_inputs": 2
-    }
-  ],
-  "Multiply": [
-    {
-      "kategory": "multiply",
-      "num_inputs": 1
+      "kategory": "generate_mask_(luminance)",
+      "num_inputs": 1,
+      "original_func_name": "luminance_mask"
     },
     {
-      "label": "factor",
-      "type": "slider",
-      "min": 0.0,
-      "max": 5.0,
-      "default": 1.1,
-      "integer": false
+      "label": "Mask (optional)",
+      "type": "image_input",
+      "optional": true,
+      "default": null
     },
     {
-      "label": "allowValueOverflow",
-      "type": "switch",
-      "default": false
+      "original_func_name": "luminance_mask"
     }
   ],
   "PixelSort": [
     {
       "kategory": "pixelsort",
-      "num_inputs": 1
+      "num_inputs": 1,
+      "original_func_name": "wrap_sort"
+    },
+    {
+      "label": "Sort Mode",
+      "type": "dropdown",
+      "options": [
+        "Luminance",
+        "HUE",
+        "RGB"
+      ],
+      "default": "Luminance"
+    },
+    {
+      "label": "Sort Mode",
+      "type": "dropdown",
+      "options": [
+        "Luminance",
+        "HUE",
+        "R",
+        "G",
+        "B"
+      ],
+      "default": "Luminance"
     },
     {
       "label": "vSplitting",
@@ -202,6 +78,222 @@
       "label": "flipVert",
       "type": "switch",
       "default": false
+    },
+    {
+      "label": "rotate",
+      "type": "dropdown",
+      "options": [
+        "-90",
+        "0",
+        "90",
+        "-180"
+      ],
+      "default": "-90"
+    },
+    {
+      "original_func_name": "wrap_sort"
+    }
+  ],
+  "Subtract": [
+    {
+      "kategory": "subtract",
+      "num_inputs": 2,
+      "original_func_name": "subtract_images"
+    },
+    {
+      "original_func_name": "subtract_images"
+    }
+  ],
+  "GrowCrystalls": [
+    {
+      "kategory": "growcrystalls",
+      "num_inputs": 1,
+      "original_func_name": "cristalline_expansion"
+    },
+    {
+      "label": "SeedCount",
+      "type": "slider",
+      "min": 0.0,
+      "max": 100.0,
+      "default": 15.0,
+      "integer": true
+    },
+    {
+      "original_func_name": "cristalline_expansion"
+    }
+  ],
+  "Mix (%)": [
+    {
+      "kategory": "mix_(%)",
+      "num_inputs": 2,
+      "original_func_name": "mix_percent"
+    },
+    {
+      "label": "percentage",
+      "type": "slider",
+      "min": 0.0,
+      "max": 100.0,
+      "default": 50.0,
+      "integer": true
+    },
+    {
+      "original_func_name": "mix_percent"
+    }
+  ],
+  "Blur": [
+    {
+      "kategory": "blur",
+      "num_inputs": 1,
+      "original_func_name": "blur"
+    },
+    {
+      "label": "Mode",
+      "type": "dropdown",
+      "options": [
+        "Box",
+        "Gaussian"
+      ],
+      "default": "Box"
+    },
+    {
+      "label": "Kernel",
+      "type": "slider",
+      "min": 2.0,
+      "max": 128.0,
+      "default": 16.0,
+      "integer": true
+    },
+    {
+      "original_func_name": "blur"
+    }
+  ],
+  "Invert": [
+    {
+      "kategory": "invert",
+      "num_inputs": 1,
+      "original_func_name": "invert"
+    },
+    {
+      "label": "Type",
+      "type": "dropdown",
+      "options": [
+        "Luminance",
+        "HUE",
+        "R",
+        "G",
+        "B"
+      ],
+      "default": "Luminance"
+    },
+    {
+      "label": "Impact",
+      "type": "slider",
+      "min": 0.0,
+      "max": 100.0,
+      "default": 50.0,
+      "integer": false
+    },
+    {
+      "original_func_name": "invert"
+    }
+  ],
+  "AlphaOver": [
+    {
+      "kategory": "alphaover",
+      "num_inputs": 2,
+      "original_func_name": "alpha_over"
+    },
+    {
+      "original_func_name": "alpha_over"
+    }
+  ],
+  "Difference": [
+    {
+      "kategory": "difference",
+      "num_inputs": 2,
+      "original_func_name": "difference"
+    },
+    {
+      "original_func_name": "difference"
+    }
+  ],
+  "Add (Clamp)": [
+    {
+      "kategory": "add_(clamp)",
+      "num_inputs": 2,
+      "original_func_name": "maxAdd"
+    },
+    {
+      "original_func_name": "maxAdd"
+    }
+  ],
+  "Multiply": [
+    {
+      "kategory": "multiply",
+      "num_inputs": 1,
+      "original_func_name": null
+    },
+    {
+      "label": "Factor",
+      "type": "slider",
+      "min": 0.0,
+      "max": 20.0,
+      "default": 2.0,
+      "integer": false
+    },
+    {
+      "label": "allowValueOverflow",
+      "type": "switch",
+      "default": false
+    }
+  ],
+  "Lerp": [
+    {
+      "kategory": "lerp",
+      "num_inputs": 2,
+      "original_func_name": "lerp"
+    },
+    {
+      "label": "Mask (optional)",
+      "type": "image_input",
+      "optional": true,
+      "default": null
+    },
+    {
+      "original_func_name": "lerp"
+    }
+  ],
+  "Kuwahara": [
+    {
+      "kategory": "kuwahara",
+      "num_inputs": 1,
+      "original_func_name": null
+    },
+    {
+      "label": "Kernel",
+      "type": "slider",
+      "min": 2.0,
+      "max": 128.0,
+      "default": 16.0,
+      "integer": true
+    },
+    {
+      "label": "isAnisotropic",
+      "type": "switch",
+      "default": true
+    },
+    {
+      "label": "regions",
+      "type": "slider",
+      "min": 3.0,
+      "max": 24.0,
+      "default": 12.0,
+      "integer": true
+    },
+    {
+      "label": "preserveEdge",
+      "type": "switch",
+      "default": true
     }
   ]
 }

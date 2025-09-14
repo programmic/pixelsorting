@@ -13,6 +13,7 @@ from guiElements.renderPassWidget import RenderPassWidget
 from guiElements.importedImagesWidget import ImportedImagesListWidget
 from renderWorker import RenderWorker
 from PIL import Image
+import random
 
 import renderHook
 import json
@@ -151,6 +152,25 @@ class GUI(QWidget):
         self.imported_images_list = ImportedImagesListWidget()
         self.imported_images_list.setMaximumHeight(150)
         rightSideLayout.addWidget(self.imported_images_list)
+
+        # Preload a default image from assets/images for faster testing
+        try:
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            project_root = os.path.dirname(script_dir)
+            images_dir = os.path.join(project_root, 'assets', 'images')
+            image_files = [f for f in os.listdir(images_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tiff', '.tif', '.webp'))]
+            if image_files:
+                default_image_path = os.path.join(images_dir, random.choice(image_files))
+            else:
+                default_image_path = None
+            if os.path.exists(default_image_path):
+                from PIL import Image
+                image = Image.open(default_image_path).convert("RGB")
+                filename = os.path.basename(default_image_path)
+                self.imported_images[filename] = image
+                self.imported_images_list.addImage(filename, image)
+        except Exception as e:
+            print(f"[Warning] Could not preload default image: {e}")
 
         # Pass selection
         passLabel = QLabel("Available render passes:")
@@ -432,25 +452,33 @@ class GUI(QWidget):
         """Save the current project configuration to a JSON file."""
         from PySide6.QtWidgets import QFileDialog, QMessageBox
         import json
-        
+        import os
+
+        # Default to /saved directory in project root
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        saved_dir = os.path.join(project_root, "saved")
+        os.makedirs(saved_dir, exist_ok=True)
+
         fileDialog = QFileDialog(self)
         fileDialog.setWindowTitle("Save Project")
         fileDialog.setNameFilter("JSON Files (*.json)")
         fileDialog.setAcceptMode(QFileDialog.AcceptSave)
-        
+        fileDialog.setDirectory(saved_dir)
+
         if fileDialog.exec():
             file_path = fileDialog.selectedFiles()[0]
             if not file_path.endswith('.json'):
                 file_path += '.json'
-                
+
             try:
                 project_data = {
                     "render_passes": [],
                     "slot_images": {},
-                    "slot_usage": self.slotUsage
+                    "slot_usage": self.slotUsage,
+                    "slot_bindings": {}
                 }
-                
-                # Save render pass configurations
+
+                # Save render pass configurations, including alias if present
                 lw = self.listWidget.list_widget
                 for i in range(lw.count()):
                     widget = lw.itemWidget(lw.item(i))
@@ -460,23 +488,41 @@ class GUI(QWidget):
                             "settings": widget.get_settings(),
                             "output_slot": widget.selectedOutput
                         }
+                        # Save alias if present (for backwards compatibility or user customization)
+                        if hasattr(widget, 'alias') and widget.alias:
+                            pass_data["alias"] = widget.alias
                         project_data["render_passes"].append(pass_data)
-                
+
                 # Save slot images
                 slot_images = {}
                 for slot in self.available_slots:
                     if slot in self.slotTable.slot_images:
-                        # For now, we'll just save the path if available
-                        # In a real implementation, you might want to save images as base64
                         slot_images[slot] = "image_data_placeholder"
-                
                 project_data["slot_images"] = slot_images
-                
+
+                # Save slot bindings: for each slot, record its source and destination if available
+                for slot in self.available_slots:
+                    binding = {}
+                    # Source: where does this slot get its image from?
+                    if hasattr(self.slotTable, 'slot_sources') and slot in self.slotTable.slot_sources:
+                        binding['source'] = self.slotTable.slot_sources[slot]
+                    # Destination: which render pass outputs to this slot?
+                    # Find any render pass that outputs to this slot
+                    output_to_this = []
+                    for i in range(lw.count()):
+                        widget = lw.itemWidget(lw.item(i))
+                        if widget and getattr(widget, 'selectedOutput', None) == slot:
+                            output_to_this.append(widget.renderpass_type)
+                    if output_to_this:
+                        binding['destination'] = output_to_this
+                    if binding:
+                        project_data['slot_bindings'][slot] = binding
+
                 with open(file_path, 'w', encoding='utf-8') as f:
                     json.dump(project_data, f, indent=2, ensure_ascii=False)
-                
+
                 QMessageBox.information(self, "Project Saved", f"Project saved successfully to:\n{file_path}")
-                
+
             except Exception as e:
                 QMessageBox.critical(self, "Save Error", f"Failed to save project:\n{str(e)}")
 
@@ -495,57 +541,59 @@ class GUI(QWidget):
 
     def loadProject(self):
         """Load a project configuration from a JSON file."""
-        from PySide6.QtWidgets import QFileDialog, QMessageBox
-        import json
-        
+
+        # Default to /saved directory in project root
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        saved_dir = os.path.join(project_root, "saved")
+        os.makedirs(saved_dir, exist_ok=True)
+
         fileDialog = QFileDialog(self)
         fileDialog.setWindowTitle("Load Project")
         fileDialog.setNameFilter("JSON Files (*.json)")
-        
+        fileDialog.setDirectory(saved_dir)
+
         if fileDialog.exec():
             file_path = fileDialog.selectedFiles()[0]
-            
+
             try:
                 with open(file_path, 'r', encoding='utf-8') as f:
                     project_data = json.load(f)
-                
                 # Clear existing render passes
                 lw = self.listWidget.list_widget
                 lw.clear()
-                
                 # Load render passes
                 for pass_data in project_data.get("render_passes", []):
                     renderpass_type = pass_data.get("type")
                     if renderpass_type in self.render_passes_config:
+                        # Always load settings config from renderPasses.json and pass saved settings
                         widget = RenderPassWidget(
                             renderpass_type,
                             self.available_slots,
                             self.startSlotSelection,
-                            self.removeRenderPass
+                            self.removeRenderPass,
+                            self.updateSlotSource,
+                            saved_settings=pass_data if pass_data else None
                         )
-                        
-                        # Load settings
-                        if "settings" in pass_data:
-                            widget.settingsWidget.set_values(pass_data["settings"])
-                        
-                        # Set output slot
-                        if "output_slot" in pass_data:
-                            widget.selectedOutput = pass_data["output_slot"]
-                            widget.outputLabel.setText(f"Output: {widget.selectedOutput}")
-                        
+                        # Restore alias if present
+                        if "alias" in pass_data:
+                            setattr(widget, "alias", pass_data["alias"])
                         # Add to list
                         listItem = QListWidgetItem()
                         listItem.setSizeHint(widget.sizeHint())
                         lw.addItem(listItem)
                         lw.setItemWidget(listItem, widget)
-                
                 # Load slot usage
                 if "slot_usage" in project_data:
                     self.slotUsage = project_data["slot_usage"]
-                
+
+                # Restore slot sources from slot_bindings if present
+                if "slot_bindings" in project_data:
+                    for slot, binding in project_data["slot_bindings"].items():
+                        if "source" in binding:
+                            self.slotTable.setSlotSource(slot, binding["source"])
+
                 self.updateSlotUsage()
                 QMessageBox.information(self, "Project Loaded", f"Project loaded successfully from:\n{file_path}")
-                
             except Exception as e:
                 QMessageBox.critical(self, "Load Error", f"Failed to load project:\n{str(e)}")
 

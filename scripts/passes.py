@@ -22,7 +22,7 @@ import converters
 from timing import timing
 
 
-def ensure_rgba(img: Image.Image) -> Image.Image:
+def ensure_rgba(img: Image.Image) -> Image.Image: #globalignore
     """Ensure image is in RGBA mode, preserving alpha if present."""
     if img.mode == 'RGBA':
         return img
@@ -38,7 +38,7 @@ def ensure_rgba(img: Image.Image) -> Image.Image:
         return img.convert('RGBA')
 
 
-def get_pixel_rgba(pixel: Union[int, Tuple[int, ...]]) -> Tuple[int, int, int, int]:
+def get_pixel_rgba(pixel: Union[int, Tuple[int, ...]]) -> Tuple[int, int, int, int]: #globalignore
     """Get RGBA values from pixel, handling different modes."""
     if isinstance(pixel, int):
         # Grayscale
@@ -55,7 +55,7 @@ def get_pixel_rgba(pixel: Union[int, Tuple[int, ...]]) -> Tuple[int, int, int, i
         return (0, 0, 0, 255)
 
 
-def put_pixel_rgba(img: Image.Image, x: int, y: int, rgba: Tuple[int, int, int, int]) -> None:
+def put_pixel_rgba(img: Image.Image, x: int, y: int, rgba: Tuple[int, int, int, int]) -> None: #globalignore
     """Put RGBA pixel, handling different image modes."""
     mode = img.mode
     if mode == 'RGBA':
@@ -72,7 +72,7 @@ def put_pixel_rgba(img: Image.Image, x: int, y: int, rgba: Tuple[int, int, int, 
 
 
 @contextlib.contextmanager
-def suppress_output():
+def suppress_output(): #globalignore
     with open(os.devnull, 'w') as devnull:
         old_stdout = sys.stdout
         old_stderr = sys.stderr
@@ -85,7 +85,7 @@ def suppress_output():
             sys.stderr = old_stderr
 
 
-def scale_image(img: Image.Image, copyImage: Image.Image, downscale: float = 0) -> Image.Image:
+def scale_image(img: Image.Image, copyImage: Image.Image, downscale: float = 0) -> Image.Image:  #globalignore
     if not 0 <= downscale <= 100: raise ValueError("ScaleImageError: Unsupported downscale value")
     
     # Create output image with transparent background (0 alpha)
@@ -127,7 +127,7 @@ def scale_image(img: Image.Image, copyImage: Image.Image, downscale: float = 0) 
     
     return out
 
-def contrast_mask(img: Image.Image, lim_lower: int, lim_upper: int) -> Image.Image:
+def generate_contrast_mask(img: Image.Image, limMin: int, limMax: int) -> Image.Image:
     out: Image.Image = Image.new("L", img.size)
     lowest = math.inf
     highest = -math.inf
@@ -140,7 +140,7 @@ def contrast_mask(img: Image.Image, lim_lower: int, lim_upper: int) -> Image.Ima
                 lowest = val
             if val > highest:
                 highest = val
-            if lim_lower < val <= lim_upper:
+            if limMin < val <= limMax:
                 out.putpixel((x, y), 255)
             else:
                 out.putpixel((x, y), 0)
@@ -169,14 +169,14 @@ def luminance_mask(img: Image.Image, mask: Optional[Image.Image] = None) -> Imag
             out.putpixel((x,y), (val, val, val))
     return out
 
-def get_coherent_image_chunks(img: Image.Image, rotate: bool = False) -> list[list[tuple[int, int]]]:
+def get_coherent_image_chunks(img: Image.Image, rotate: bool = False) -> list[list[tuple[int, int]]]: #globalignore
     img = img.convert("RGB")
     if rotate: img = img.rotate(90, expand=True)
     width, height = img.size
     visited = [[False for _ in range(height)] for _ in range(width)]
     chunks = []
 
-    def get_neighbors(x, y):
+    def get_neighbors(x, y): #globalignore
         for dx, dy in [(-1,0),(1,0),(0,-1),(0,1)]:
             nx, ny = x + dx, y + dy
             if 0 <= nx < width and 0 <= ny < height:
@@ -199,7 +199,7 @@ def get_coherent_image_chunks(img: Image.Image, rotate: bool = False) -> list[li
                     chunks.append(chunk)
     return chunks
 
-def to_vertical_chunks(chunks: list[list[tuple[int, int]]]) -> list[list[tuple[int, int]]]:
+def to_vertical_chunks(chunks: list[list[tuple[int, int]]]) -> list[list[tuple[int, int]]]: #globalignore
     out = []
     for chunk in chunks:
         chunk = sorted(chunk)
@@ -218,7 +218,7 @@ def to_vertical_chunks(chunks: list[list[tuple[int, int]]]) -> list[list[tuple[i
         out.extend(v_chunks)
     return out
 
-def split_connected_chunks(v_chunks: list[list[tuple[int, int]]]) -> list[list[tuple[int, int]]]:
+def split_connected_chunks(v_chunks: list[list[tuple[int, int]]]) -> list[list[tuple[int, int]]]: #globalignore
     out = []
 
     for v_chunk in v_chunks:
@@ -248,7 +248,7 @@ def visualize_chunks(img: Image.Image, chunks: list[list[tuple[int, int]]], rota
         for x, y in chunk:
             out.putpixel((x, y), color)
     if rotate: out = out.rotate(-90, expand=True)
-    return out
+    return out #globalignore
 
 def wrap_sort(img: Image.Image,
               mode: str,
@@ -286,12 +286,12 @@ def wrap_sort(img: Image.Image,
     # Call the actual sort function with translated parameters
     return sort(img, mode=mode, flip_dir=flip_dir, rotate=rotate_bool, mask=mask)
 
-def sort(img: Image.Image,
+def sort(img: Image.Image, 
          mode: str = "lum",
          flip_dir: bool = False,
          rotate: bool = True,
          mask: Optional[Image.Image] = None
-         ) -> Image.Image:
+         ) -> Image.Image: #globalignore
     # Generate chunks from mask if provided, otherwise sort the whole image
     if mask:
         # Ensure mask is in RGB format for get_coherent_image_chunks
@@ -348,7 +348,7 @@ def sort(img: Image.Image,
     return out
 
 @timing
-def blur_box(img: Image.Image, kernel: int, num_threads: int = 64) -> Image.Image:
+def blur_box(img: Image.Image, kernel: int, num_threads: int = 64) -> Image.Image: #globalignore
     img_rgba = ensure_rgba(img)
     width, height = img.size
     original_pixels = img_rgba.load()
@@ -395,49 +395,23 @@ def blur_box(img: Image.Image, kernel: int, num_threads: int = 64) -> Image.Imag
     return output
 
 @timing
-def blur_box_gpu(img: Image.Image, kernel_radius: int) -> Image.Image:
-    """GPU-accelerated box blur with proper resource cleanup."""
+def blur_box_gpu(img: Image.Image, blur_kernel: int) -> Image.Image: #globalignore
+    """GPU-accelerated box blur with proper resource cleanup. Accepts kernel_size and converts to radius."""
     from scripts.gpu_context import opencl_context
-    
+
     img = img.convert("RGB")
     img_np = np.array(img).astype(np.uint8)
     height, width, channels = img_np.shape
 
+    # Convert kernel_size to radius
+    radius = (blur_kernel - 1) // 2
+
     with opencl_context() as (ctx, queue):
         # OpenCL-Programm (Box Blur)
-        program_src = f"""
-        __kernel void box_blur(__global const uchar* input,
-                               __global uchar* output,
-                               const int width,
-                               const int height,
-                               const int channels,
-                               const int radius)
-        {{
-            int x = get_global_id(0);
-            int y = get_global_id(1);
-            
-            if (x >= width || y >= height)
-                return;
+        shader_path = os.path.join(os.path.dirname(__file__), "shaders", "box_blur.cl")
+        with open(shader_path, "r", encoding="utf-8") as f:
+            program_src = f.read()
 
-            for (int c = 0; c < channels; c++) {{
-                int sum = 0;
-                int count = 0;
-
-                for (int ky = -radius; ky <= radius; ky++) {{
-                    for (int kx = -radius; kx <= radius; kx++) {{
-                        int nx = clamp(x + kx, 0, width - 1);
-                        int ny = clamp(y + ky, 0, height - 1);
-                        int idx = (ny * width + nx) * channels + c;
-                        sum += input[idx];
-                        count++;
-                    }}
-                }}
-
-                int out_idx = (y * width + x) * channels + c;
-                output[out_idx] = sum / count;
-            }}
-        }}
-        """
         with suppress_output():
             program = cl.Program(ctx, program_src).build()
 
@@ -453,7 +427,7 @@ def blur_box_gpu(img: Image.Image, kernel_radius: int) -> Image.Image:
         kernel = program.box_blur
         kernel.set_args(input_buf, output_buf,
                         np.int32(width), np.int32(height),
-                        np.int32(channels), np.int32(kernel_radius))
+                        np.int32(channels), np.int32(radius))
 
         global_size = (width, height)
         cl.enqueue_nd_range_kernel(queue, kernel, global_size, None)
@@ -465,7 +439,7 @@ def blur_box_gpu(img: Image.Image, kernel_radius: int) -> Image.Image:
         return Image.fromarray(output_img, 'RGB')
 
 @timing
-def blur_gaussian(img: Image.Image, kernel: int, sigma: float = 1.0, num_threads: int = 64) -> Image.Image:
+def blur_gaussian(img: Image.Image, kernel: int, sigma: float = 1.0, num_threads: int = 64) -> Image.Image: #globalignore
     """Optimized Gaussian blur using separable convolution with NumPy."""
     # Convert to numpy array for faster processing
     img_rgba = ensure_rgba(img)
@@ -511,7 +485,7 @@ def blur_gaussian(img: Image.Image, kernel: int, sigma: float = 1.0, num_threads
     return Image.fromarray(output_array, 'RGBA')
 
 @timing
-def blur_gaussian_fast(img: Image.Image, kernel: int, sigma: float = 1.0) -> Image.Image:
+def blur_gaussian_fast(img: Image.Image, kernel: int, sigma: float = 1.0) -> Image.Image: #globalignore
     """Highly optimized Gaussian blur using vectorized NumPy operations."""
     img_rgba = ensure_rgba(img)
     img_array = np.array(img_rgba, dtype=np.float32)
@@ -545,14 +519,14 @@ def blur_gaussian_fast(img: Image.Image, kernel: int, sigma: float = 1.0) -> Ima
     output_array = np.clip(output_array, 0, 255).astype(np.uint8)
     return Image.fromarray(output_array, 'RGBA')
 
-def __gaussian_kernel_1d(kernel_size: int, sigma: float) -> np.ndarray:
+def __gaussian_kernel_1d(kernel_size: int, sigma: float) -> np.ndarray: #globalignore
     """Erzeuge eine 1D-Gaussian-Kernel."""
     radius = kernel_size // 2
     ax = np.arange(-radius, radius + 1)
     kernel = np.exp(-(ax**2) / (2. * sigma**2))
     return kernel / np.sum(kernel)
 
-def __convolve_separable(img_array: np.ndarray, kernel: np.ndarray) -> np.ndarray:
+def __convolve_separable(img_array: np.ndarray, kernel: np.ndarray) -> np.ndarray: #globalignore
     pad_width = len(kernel) // 2
     padded = np.pad(img_array, ((pad_width, pad_width), (pad_width, pad_width), (0, 0)), mode='reflect')
 
@@ -579,12 +553,12 @@ def __convolve_separable(img_array: np.ndarray, kernel: np.ndarray) -> np.ndarra
     cropped = output[pad_width:-pad_width, pad_width:-pad_width, :]
     return cropped
 
-def __process_chunk(sub_img: np.ndarray, kernel: np.ndarray) -> np.ndarray:
+def __process_chunk(sub_img: np.ndarray, kernel: np.ndarray) -> np.ndarray: #globalignore
     """Blurt ein gepaddetes Chunk und entfernt die Padding-Ränder."""
     blurred = __convolve_separable(sub_img, kernel)
     return blurred
 
-def __blur_gaussian_1d(img: Image.Image, kernel: int, sigma: float = None, num_processes: int = 4) -> Image.Image:
+def __blur_gaussian_1d(img: Image.Image, kernel: int, sigma: float = None, num_processes: int = 4) -> Image.Image: #globalignore
     img = img.convert("RGB")
     img_array = np.array(img, dtype=np.float32)
     height = img_array.shape[0]
@@ -649,7 +623,7 @@ def subtract_images(i1: Image.Image, i2: Image.Image) -> Image.Image:
                 out.putpixel((x, y), diff)
     return out
 
-def adjust_brightness(img: Image.Image, gamma: float) -> Image.Image:
+def adjust_brightness(img: Image.Image, gamma: float) -> Image.Image: #globalignore
     out = img.copy()
     width, height = img.size
 
@@ -686,12 +660,12 @@ def adjust_brightness(img: Image.Image, gamma: float) -> Image.Image:
 
     return out
 
-def __get_standard_deviation(p1, p2):
+def __get_standard_deviation(p1, p2): #globalignore
     r1 ,g1, b1 = p1
     r2, g2, b2 = p2
     return abs(r1 - r2) + abs(g1 - g2) + abs(b1 - b2)
 
-def __box_blur_np(arr, kernel):
+def __box_blur_np(arr, kernel): #globalignore
     """Fast box blur for 2D numpy arrays with padding."""
     k = 2 * kernel + 1
     # Cumulative sum over rows and columns
@@ -716,7 +690,7 @@ def __box_blur_np(arr, kernel):
             ) / (k * k)
     return out
 
-def __process_rows(y_start, y_end, padded_gray, padded_img, kernel, height, width):
+def __process_rows(y_start, y_end, padded_gray, padded_img, kernel, height, width): #globalignore
     result = np.zeros((y_end - y_start, width, 3), dtype=np.float32)
     half = kernel + 1
 
@@ -752,10 +726,10 @@ def kuwahara_wrapper(img: Image.Image, kernel: int, isAnisotropic: bool, regions
             return anisotropic_kuwahara_papari_gpu(img, kernel, regions)
         else: return anisotropic_kuwahara_gpu(img, kernel, regions)
     else:
-        return kuwahara(img, kernel)
+        return kuwahara_gpu(img, kernel)
 
 
-def kuwahara(img: Image.Image, kernel: int, num_threads: int = None) -> Image.Image:
+def kuwahara(img: Image.Image, kernel: int, num_threads: int = None) -> Image.Image: #globalignore
     if num_threads is None:
         num_threads = os.cpu_count() or 4
 
@@ -789,7 +763,7 @@ def kuwahara(img: Image.Image, kernel: int, num_threads: int = None) -> Image.Im
 
 
 
-def kuwahara_gpu(img: Image.Image, kernel_size: float) -> Image.Image:
+def kuwahara_gpu(img: Image.Image, kernel_size: float) -> Image.Image: #globalignore
     """
     Enhanced kuwahara filter with GPU acceleration and CPU fallback.
     Handles OpenCL errors gracefully and provides fallback to CPU implementation.
@@ -812,152 +786,41 @@ def kuwahara_gpu(img: Image.Image, kernel_size: float) -> Image.Image:
         img = img.convert("RGB")
         img_np = np.array(img).astype(np.float32)
         height, width, channels = img_np.shape
-        
+
+        import os
+        cl_path = os.path.join(os.path.dirname(__file__), "shaders", "kuwahara_filter.cl")
+        with open(cl_path, "r", encoding="utf-8") as f:
+            program_src = f.read()
+
         with opencl_context() as (ctx, queue):
-            # Build OpenCL program
-            program_src = f"""
-            __kernel void kuwahara_filter(
-                __global const float* input,
-                __global float* output,
-                const int width,
-                const int height,
-                const int channels,
-                const int radius
-            ) {{
-                int x = get_global_id(0);
-                int y = get_global_id(1);
-
-                if (x >= width || y >= height)
-                    return;
-
-                float mean[4][3] = {{0}};
-                float var[4] = {{0}};
-                int count[4] = {{0}};
-
-                // Calculate regions and their statistics
-                // Top-left region
-                for (int dy = -radius; dy <= 0; dy++) {{
-                    for (int dx = -radius; dx <= 0; dx++) {{
-                        int nx = clamp(x + dx, 0, width - 1);
-                        int ny = clamp(y + dy, 0, height - 1);
-                        int idx = (ny * width + nx) * channels;
-                        
-                        for (int c = 0; c < channels; c++) {{
-                            mean[0][c] += input[idx + c];
-                        }}
-                        
-                        float gray = 0.299f * input[idx] + 0.587f * input[idx + 1] + 0.114f * input[idx + 2];
-                        var[0] += gray * gray;
-                        count[0]++;
-                    }}
-                }}
-
-                // Top-right region
-                for (int dy = -radius; dy <= 0; dy++) {{
-                    for (int dx = 0; dx <= radius; dx++) {{
-                        int nx = clamp(x + dx, 0, width - 1);
-                        int ny = clamp(y + dy, 0, height - 1);
-                        int idx = (ny * width + nx) * channels;
-                        
-                        for (int c = 0; c < channels; c++) {{
-                            mean[1][c] += input[idx + c];
-                        }}
-                        
-                        float gray = 0.299f * input[idx] + 0.587f * input[idx + 1] + 0.114f * input[idx + 2];
-                        var[1] += gray * gray;
-                        count[1]++;
-                    }}
-                }}
-
-                // Bottom-left region
-                for (int dy = 0; dy <= radius; dy++) {{
-                    for (int dx = -radius; dx <= 0; dx++) {{
-                        int nx = clamp(x + dx, 0, width - 1);
-                        int ny = clamp(y + dy, 0, height - 1);
-                        int idx = (ny * width + nx) * channels;
-                        
-                        for (int c = 0; c < channels; c++) {{
-                            mean[2][c] += input[idx + c];
-                        }}
-                        
-                        float gray = 0.299f * input[idx] + 0.587f * input[idx + 1] + 0.114f * input[idx + 2];
-                        var[2] += gray * gray;
-                        count[2]++;
-                    }}
-                }}
-
-                // Bottom-right region
-                for (int dy = 0; dy <= radius; dy++) {{
-                    for (int dx = 0; dx <= radius; dx++) {{
-                        int nx = clamp(x + dx, 0, width - 1);
-                        int ny = clamp(y + dy, 0, height - 1);
-                        int idx = (ny * width + nx) * channels;
-                        
-                        for (int c = 0; c < channels; c++) {{
-                            mean[3][c] += input[idx + c];
-                        }}
-                        
-                        float gray = 0.299f * input[idx] + 0.587f * input[idx + 1] + 0.114f * input[idx + 2];
-                        var[3] += gray * gray;
-                        count[3]++;
-                    }}
-                }}
-
-                // Find region with minimum variance
-                float min_var = 1e20f;
-                int best_region = 0;
-
-                for (int i = 0; i < 4; i++) {{
-                    if (count[i] > 0) {{
-                        float variance = var[i] / count[i];
-                        if (variance < min_var) {{
-                            min_var = variance;
-                            best_region = i;
-                        }}
-                    }}
-                }}
-
-                // Calculate mean color for best region
-                int out_idx = (y * width + x) * channels;
-                for (int c = 0; c < channels; c++) {{
-                    output[out_idx + c] = mean[best_region][c] / max(count[best_region], 1);
-                }}
-            }}
-            """
-            
-            # Build program
             with suppress_output():
                 program = cl.Program(ctx, program_src).build()
-            
-            # Prepare buffers
+
             flat_input = img_np.flatten()
             output_np = np.empty_like(flat_input)
-            
+
             mf = cl.mem_flags
             input_buf = cl.Buffer(ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=flat_input)
             output_buf = cl.Buffer(ctx, mf.WRITE_ONLY, output_np.nbytes)
-            
-            # Execute kernel
+
             compute_kernel = program.kuwahara_filter
             compute_kernel.set_args(input_buf, output_buf,
                             np.int32(width), np.int32(height),
                             np.int32(channels), np.int32(kernel_size))
-            
+
             global_size = (width, height)
             cl.enqueue_nd_range_kernel(queue, compute_kernel, global_size, None)
             cl.enqueue_copy(queue, output_np, output_buf)
             queue.finish()
-            
-            # Reshape output
+
             output_img = output_np.reshape((height, width, channels))
             output_img = np.clip(output_img, 0, 255).astype(np.uint8)
             return Image.fromarray(output_img, 'RGB')
-        
     except Exception as e:
         print(f"OpenCL error: {str(e)}. Falling back to CPU implementation.")
         return _kuwahara_cpu_fallback(img, kernel_size)
 
-def anisotropic_kuwahara_gpu(img: Image.Image, kernel_size: float, regions: int = 8) -> Image.Image:
+def anisotropic_kuwahara_gpu(img: Image.Image, kernel_size: float, regions: int = 8) -> Image.Image: #globalignore
     """
     Anisotropic Kuwahara filter with GPU acceleration and CPU fallback.
     Uses local structure tensor to adapt region orientation.
@@ -979,102 +842,15 @@ def anisotropic_kuwahara_gpu(img: Image.Image, kernel_size: float, regions: int 
         img_np = np.array(img).astype(np.float32)
         height, width, channels = img_np.shape
 
+        import os
+        cl_path = os.path.join(os.path.dirname(__file__), "shaders", "anisotropic_kuwahara.cl")
+        with open(cl_path, "r", encoding="utf-8") as f:
+            program_src = f.read()
+
         with opencl_context() as (ctx, queue):
-            program_src = f"""
-            __kernel void anisotropic_kuwahara(
-                __global const float* input,
-                __global float* output,
-                const int width,
-                const int height,
-                const int channels,
-                const int radius,
-                const int regions
-            ) {{
-                int x = get_global_id(0);
-                int y = get_global_id(1);
-
-                if (x >= width || y >= height)
-                    return;
-
-                // --- compute gradients for structure tensor ---
-                int idx = (y * width + x) * channels;
-                float gx = 0.0f, gy = 0.0f;
-                if (x > 0 && x < width-1 && y > 0 && y < height-1) {{
-                    int idx_left  = (y * width + (x-1)) * channels;
-                    int idx_right = (y * width + (x+1)) * channels;
-                    int idx_up    = ((y-1) * width + x) * channels;
-                    int idx_down  = ((y+1) * width + x) * channels;
-                    
-                    float gray_left  = 0.299f*input[idx_left] + 0.587f*input[idx_left+1] + 0.114f*input[idx_left+2];
-                    float gray_right = 0.299f*input[idx_right] + 0.587f*input[idx_right+1] + 0.114f*input[idx_right+2];
-                    float gray_up    = 0.299f*input[idx_up] + 0.587f*input[idx_up+1] + 0.114f*input[idx_up+2];
-                    float gray_down  = 0.299f*input[idx_down] + 0.587f*input[idx_down+1] + 0.114f*input[idx_down+2];
-
-                    gx = gray_right - gray_left;
-                    gy = gray_down - gray_up;
-                }}
-                float orientation = atan2(gy, gx);
-
-                // --- accumulate statistics in wedge-shaped regions ---
-                float mean[16][3]; // up to 16 regions
-                float var[16];
-                int count[16];
-                for (int i = 0; i < regions; i++) {{
-                    for (int c = 0; c < 3; c++) mean[i][c] = 0.0f;
-                    var[i] = 0.0f;
-                    count[i] = 0;
-                }}
-
-                for (int dy = -radius; dy <= radius; dy++) {{
-                    for (int dx = -radius; dx <= radius; dx++) {{
-                        int nx = clamp(x + dx, 0, width - 1);
-                        int ny = clamp(y + dy, 0, height - 1);
-                        int nidx = (ny * width + nx) * channels;
-
-                        float gray = 0.299f*input[nidx] + 0.587f*input[nidx+1] + 0.114f*input[nidx+2];
-                        float angle = atan2((float)dy, (float)dx) - orientation;
-
-                        // map angle to [0, 2pi)
-                        while (angle < 0) angle += 6.2831853f;
-                        while (angle >= 6.2831853f) angle -= 6.2831853f;
-
-                        int region = (int)(angle / (6.2831853f / regions));
-                        if (region >= regions) region = regions-1;
-
-                        for (int c = 0; c < channels; c++) {{
-                            mean[region][c] += input[nidx + c];
-                        }}
-                        var[region] += gray * gray;
-                        count[region]++;
-                    }}
-                }}
-
-                // choose region with minimum variance
-                float min_var = 1e20f;
-                int best_region = 0;
-                for (int i = 0; i < regions; i++) {{
-                    if (count[i] > 0) {{
-                        float variance = var[i] / count[i];
-                        if (variance < min_var) {{
-                            min_var = variance;
-                            best_region = i;
-                        }}
-                    }}
-                }}
-
-                // assign pixel color
-                int out_idx = (y * width + x) * channels;
-                for (int c = 0; c < channels; c++) {{
-                    output[out_idx + c] = mean[best_region][c] / max(count[best_region], 1);
-                }}
-            }}
-            """
-
-            # Build program
             with suppress_output():
                 program = cl.Program(ctx, program_src).build()
 
-            # Prepare buffers
             flat_input = img_np.flatten()
             output_np = np.empty_like(flat_input)
 
@@ -1082,7 +858,6 @@ def anisotropic_kuwahara_gpu(img: Image.Image, kernel_size: float, regions: int 
             input_buf = cl.Buffer(ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=flat_input)
             output_buf = cl.Buffer(ctx, mf.WRITE_ONLY, output_np.nbytes)
 
-            # Execute kernel
             compute_kernel = program.anisotropic_kuwahara
             compute_kernel.set_args(input_buf, output_buf,
                                     np.int32(width), np.int32(height),
@@ -1093,11 +868,9 @@ def anisotropic_kuwahara_gpu(img: Image.Image, kernel_size: float, regions: int 
             cl.enqueue_copy(queue, output_np, output_buf)
             queue.finish()
 
-            # Reshape output
             output_img = output_np.reshape((height, width, channels))
             output_img = np.clip(output_img, 0, 255).astype(np.uint8)
             return Image.fromarray(output_img, 'RGB')
-
     except Exception as e:
         print(f"OpenCL error: {str(e)}. Falling back to CPU implementation.")
         return _cpu_fallback(img, kernel_size, regions)
@@ -1110,7 +883,7 @@ def anisotropic_kuwahara_papari_gpu(
     tensor_sigma: float = 2.0,
     anisotropy: float = 3.0,
     epsilon: float = 1e-3,
-) -> Image.Image:
+) -> Image.Image: #globalignore
     """
     Edge-preserving anisotropic Kuwahara (Papari-style), GPU (OpenCL) + CPU fallback.
 
@@ -1183,233 +956,10 @@ def anisotropic_kuwahara_papari_gpu(
     H, W, C = arr.shape
     gray = (0.299*arr[...,0] + 0.587*arr[...,1] + 0.114*arr[...,2]).astype(np.float32) / 255.0
 
-    # Build OpenCL program
-    prg_src = r"""
-    __kernel void papari_aniso_kuwahara(
-        __global const float* img,      // RGB interleaved, float32 [0..255]
-        __global const float* gray,     // float32 [0..1]
-        __global float* out,            // RGB interleaved
-        const int W,
-        const int H,
-        const int C,
-        const int radius,
-        const int regions,
-        const float tensor_sigma,
-        const float anisotropy,
-        const float epsilon
-    )
-    {
-        const float PI = 3.14159265358979323846f;
-        const float TWO_PI = 6.28318530717958647693f;
-
-        int x = get_global_id(0);
-        int y = get_global_id(1);
-        if (x >= W || y >= H) return;
-
-        // --- Sobel gradients (on gray) ---
-        // boundary-safe sampling
-        #define G(ix,iy) gray[ clamp(iy,0,H-1) * W + clamp(ix,0,W-1) ]
-
-        float gx = 0.0f;
-        float gy = 0.0f;
-
-        // Sobel 3x3
-        gx += -1.0f*G(x-1,y-1) + 1.0f*G(x+1,y-1);
-        gx += -2.0f*G(x-1,y  ) + 2.0f*G(x+1,y  );
-        gx += -1.0f*G(x-1,y+1) + 1.0f*G(x+1,y+1);
-
-        gy += -1.0f*G(x-1,y-1) + -2.0f*G(x,y-1) + -1.0f*G(x+1,y-1);
-        gy +=  1.0f*G(x-1,y+1) +  2.0f*G(x,y+1) +  1.0f*G(x+1,y+1);
-
-        // Structure tensor components (pre-smoothing)
-        float Ixx = gx*gx;
-        float Iyy = gy*gy;
-        float Ixy = gx*gy;
-
-        // --- Gaussian smoothing of tensor (separable, small radius ~ 3*sigma) ---
-        // Build 1D kernel on the fly (small loop) — OK for moderate sigma.
-        int rgs = max(1, (int)ceil(3.0f * tensor_sigma));
-        int klen = 2*rgs + 1;
-        // Accumulators for horizontal pass
-        float norm = 0.0f;
-        float kern[33]; // supports sigma up to ~5.3 (3*sigma <= 16) -> klen <= 33
-        if (klen > 33) { // clamp for safety
-            rgs = 16;
-            klen = 33;
-        }
-        for (int i = -rgs; i <= rgs; ++i){
-            float v = exp(-0.5f * ( (float)i / tensor_sigma) * ((float)i / tensor_sigma) );
-            kern[i + rgs] = v;
-            norm += v;
-        }
-        for (int i = 0; i < klen; ++i) kern[i] /= norm;
-
-        // horizontal
-        float Ixx_h = 0.0f, Iyy_h = 0.0f, Ixy_h = 0.0f;
-        for (int i = -rgs; i <= rgs; ++i){
-            int xx = clamp(x + i, 0, W-1);
-            // recompute Sobel for neighbor? too costly. Instead, approximate by reusing center tensor is not ok.
-            // We approximate smoothing on-the-fly by sampling gray neighbors and redoing single-pixel tensor components in line.
-            // Compute neighbor gradients:
-            float ngx = 0.0f, ngy = 0.0f;
-            ngx += -1.0f*G(xx-1,y-1) + 1.0f*G(xx+1,y-1);
-            ngx += -2.0f*G(xx-1,y  ) + 2.0f*G(xx+1,y  );
-            ngx += -1.0f*G(xx-1,y+1) + 1.0f*G(xx+1,y+1);
-
-            ngy += -1.0f*G(xx-1,y-1) + -2.0f*G(xx,y-1) + -1.0f*G(xx+1,y-1);
-            ngy +=  1.0f*G(xx-1,y+1) +  2.0f*G(xx,y+1) +  1.0f*G(xx+1,y+1);
-
-            float w = kern[i + rgs];
-            Ixx_h += w * (ngx*ngx);
-            Iyy_h += w * (ngy*ngy);
-            Ixy_h += w * (ngx*ngy);
-        }
-
-        // vertical pass (use already horizontally-smoothed by repeating line computation along y)
-        float Ixx_s = 0.0f, Iyy_s = 0.0f, Ixy_s = 0.0f;
-        for (int j = -rgs; j <= rgs; ++j){
-            int yy = clamp(y + j, 0, H-1);
-
-            // recompute horizontal-smoothed tensor at (x,yy)
-            float gx2 = 0.0f, gy2 = 0.0f;
-            gx2 += -1.0f*G(x-1,yy-1) + 1.0f*G(x+1,yy-1);
-            gx2 += -2.0f*G(x-1,yy  ) + 2.0f*G(x+1,yy  );
-            gx2 += -1.0f*G(x-1,yy+1) + 1.0f*G(x+1,yy+1);
-
-            gy2 += -1.0f*G(x-1,yy-1) + -2.0f*G(x,yy-1) + -1.0f*G(x+1,yy-1);
-            gy2 +=  1.0f*G(x-1,yy+1) +  2.0f*G(x,yy+1) +  1.0f*G(x+1,yy+1);
-
-            // Now horizontal smooth around (x,yy)
-            float Ixx_h2 = 0.0f, Iyy_h2 = 0.0f, Ixy_h2 = 0.0f;
-            for (int i = -rgs; i <= rgs; ++i){
-                int xx = clamp(x + i, 0, W-1);
-                float ngx = 0.0f, ngy = 0.0f;
-                ngx += -1.0f*G(xx-1,yy-1) + 1.0f*G(xx+1,yy-1);
-                ngx += -2.0f*G(xx-1,yy  ) + 2.0f*G(xx+1,yy  );
-                ngx += -1.0f*G(xx-1,yy+1) + 1.0f*G(xx+1,yy+1);
-
-                ngy += -1.0f*G(xx-1,yy-1) + -2.0f*G(xx,yy-1) + -1.0f*G(xx+1,yy-1);
-                ngy +=  1.0f*G(xx-1,yy+1) +  2.0f*G(xx,yy+1) +  1.0f*G(xx+1,yy+1);
-
-                float w = kern[i + rgs];
-                Ixx_h2 += w * (ngx*ngx);
-                Iyy_h2 += w * (ngy*ngy);
-                Ixy_h2 += w * (ngx*ngy);
-            }
-            float wy = kern[j + rgs];
-            Ixx_s += wy * Ixx_h2;
-            Iyy_s += wy * Iyy_h2;
-            Ixy_s += wy * Ixy_h2;
-        }
-
-        // --- Eigen decomposition for dominant orientation ---
-        // Tensor T = [[Ixx_s, Ixy_s],[Ixy_s, Iyy_s]]
-        float tr = Ixx_s + Iyy_s;
-        float det = Ixx_s*Iyy_s - Ixy_s*Ixy_s;
-        float tmp = tr*tr - 4.0f*det;
-        tmp = tmp < 0.0f ? 0.0f : tmp;
-        float sqrt_disc = sqrt(tmp);
-        float lam1 = 0.5f*(tr + sqrt_disc); // dominant
-        float lam2 = 0.5f*(tr - sqrt_disc);
-
-        // dominant eigenvector (vx,vy)
-        float vx, vy;
-        float c = Ixy_s;
-        float a = Ixx_s;
-        float b = Iyy_s;
-        float denom = fabs(c) > fabs(a - lam1) ? hypot(c, (lam1 - a)) : hypot((lam1 - b), c);
-        if (denom < 1e-12f) { vx = 1.0f; vy = 0.0f; }
-        else {
-            float vx_tmp = (fabs(c) > fabs(a - lam1)) ? c : (lam1 - b);
-            float vy_tmp = (fabs(c) > fabs(a - lam1)) ? (lam1 - a) : c;
-            float nrm = hypot(vx_tmp, vy_tmp);
-            vx = vx_tmp / (nrm + 1e-12f);
-            vy = vy_tmp / (nrm + 1e-12f);
-        }
-
-        // Build ellipse inverse covariance aligned with (vx,vy)
-        // major axis along eigenvector (vx,vy)
-        float sigma_major = (float)radius;                // along-edge: larger support
-        float sigma_minor = fmax(sigma_major/anisotropy, 1.0f); // across-edge: smaller support
-        float inv_sx2 = 1.0f / (sigma_major*sigma_major + epsilon);
-        float inv_sy2 = 1.0f / (sigma_minor*sigma_minor + epsilon);
-
-        // Rotation matrix components
-        float ux = vx, uy = vy;        // major axis unit
-        float vx2 = -vy, vy2 = vx;     // minor axis unit (perp)
-
-        // Sector setup
-        float sector_w = TWO_PI / (float)regions;
-
-        // Weighted accumulators per sector
-        float wsum[32];    // supports up to 32 sectors
-        float mean[32][3];
-        float m2[32];      // second moment of gray for variance proxy
-
-        int R = regions > 32 ? 32 : regions;
-        for (int r = 0; r < R; ++r){
-            wsum[r] = 0.0f;
-            m2[r] = 0.0f;
-            mean[r][0] = mean[r][1] = mean[r][2] = 0.0f;
-        }
-
-        // Iterate neighborhood
-        for (int dy = -radius; dy <= radius; ++dy){
-            int yy0 = clamp(y + dy, 0, H-1);
-            for (int dx = -radius; dx <= radius; ++dx){
-                int xx0 = clamp(x + dx, 0, W-1);
-
-                // Elliptical Gaussian weight in local (major/minor) coords:
-                float xp = dx*ux + dy*uy;        // projection on major axis
-                float yp = dx*vx2 + dy*vy2;      // projection on minor axis
-                float w_ell = exp(-0.5f * (xp*xp*inv_sx2 + yp*yp*inv_sy2));
-
-                // Sector index in *local* angle frame (align 0 with major axis)
-                float ang = atan2((float)dy, (float)dx) - atan2(uy, ux);
-                // map to [0, 2pi)
-                while (ang < 0.0f) ang += TWO_PI;
-                while (ang >= TWO_PI) ang -= TWO_PI;
-                int sid = (int)(ang / sector_w);
-                if (sid < 0) sid = 0;
-                if (sid >= R) sid = R-1;
-
-                // read color & gray
-                int nidx = (yy0 * W + xx0) * C;
-                float r = img[nidx + 0];
-                float g = img[nidx + 1];
-                float bcol = img[nidx + 2];
-                float gval = 0.299f*r + 0.587f*g + 0.114f*bcol;
-
-                wsum[sid] += w_ell;
-                mean[sid][0] += w_ell * r;
-                mean[sid][1] += w_ell * g;
-                mean[sid][2] += w_ell * bcol;
-                m2[sid] += w_ell * (gval * gval);
-            }
-        }
-
-        // Choose sector with minimal weighted variance proxy (E[g^2])
-        int best = 0;
-        float bestv = 1e30f;
-        for (int r = 0; r < R; ++r){
-            float denom2 = wsum[r] + epsilon;
-            float varproxy = m2[r] / denom2;
-            if (varproxy < bestv){
-                bestv = varproxy;
-                best = r;
-            }
-        }
-
-        // Write mean color of best sector
-        int out_idx = (y * W + x) * C;
-        float denom3 = wsum[best] + epsilon;
-        out[out_idx + 0] = mean[best][0] / denom3;
-        out[out_idx + 1] = mean[best][1] / denom3;
-        out[out_idx + 2] = mean[best][2] / denom3;
-
-        #undef G
-    }
-    """
+    import os
+    cl_path = os.path.join(os.path.dirname(__file__), "shaders", "papari_aniso_kuwahara.cl")
+    with open(cl_path, "r", encoding="utf-8") as f:
+        prg_src = f.read()
 
     with suppress_output():
         program = cl.Program(ctx, prg_src).build()
@@ -1440,7 +990,7 @@ def anisotropic_kuwahara_papari_gpu(
     out = np.clip(out, 0, 255).astype(np.uint8)
     return Image.fromarray(out, mode='RGB')
 
-def kuwahara_grays(img: Image.Image, kernel: int) -> Image.Image:
+def kuwahara_grays(img: Image.Image, kernel: int) -> Image.Image: #globalignore
     print("converting image...")
     img_np = np.array(img.convert("L"), dtype=np.float32)
     print("1/6")
@@ -1500,7 +1050,7 @@ def cristalline_expansion(img: Image.Image, c: int) -> Image.Image:
         raise ValueError("Sample count must be positive")
     elif c >= max_x * max_y:
         print("Warning: Sample count is too high")
-        c = int(max_x * max_y / 5000)
+        c = int(max_x * max_y / 500)
         print("Set new sample count:", c)
 
     all_coords = [(x, y) for x in tqdm(range(max_x), desc="Generating Seeds") for y in range(max_y)]
@@ -1559,18 +1109,15 @@ def mix_percent(a:Image.Image, b: Image.Image, p: int) -> Image.Image:
     return out
 
 # Function aliases to match render pass names from renderPasses.json
-def mix_by_percent(img1: Image.Image, img2: Image.Image, mix_factor: float) -> Image.Image:
+def mix_by_percent(img1: Image.Image, img2: Image.Image, mix_factor: float) -> Image.Image: #globalignore
     """Alias for mix_percent to match render pass name."""
     return mix_percent(img1, img2, int(mix_factor))
 
 def blur(img: Image.Image, blur_type: str, blur_kernel: int) -> Image.Image:
     """Alias for blur functions to match render pass name."""
-    if blur_type == "Box":
-        return blur_box(img, int(blur_kernel))
-    elif blur_type == "Gaussian":
-        return blur_gaussian(img, int(blur_kernel))
-    else:
-        return blur_box(img, int(blur_kernel))
+    if      blur_type == "Box"       : return blur_box_gpu(  img, kernel=int(blur_kernel))
+    elif    blur_type == "Gaussian"  : return blur_gaussian( img, kernel=int(blur_kernel))
+    else                            : return blur_box_gpu(  img, kernel=int(blur_kernel))
 
 def invert(img: Image.Image, invert_type: str, impact_factor: float) -> Image.Image:
     """
@@ -1611,13 +1158,13 @@ def invert(img: Image.Image, invert_type: str, impact_factor: float) -> Image.Im
                     inv_r, inv_g, inv_b = r, 255 - g, b
                 elif invert_type == "B":
                     inv_r, inv_g, inv_b = r, g, 255 - b
-                elif invert_type == "Luminance":
+                elif invert_type == "Lum":
                     lum = int(0.299 * r + 0.587 * g + 0.114 * b)
                     inv_lum = 255 - lum
                     diff = inv_lum - lum
                     inv_r, inv_g, inv_b = r + diff, g + diff, b + diff
                 else:
-                    raise ValueError("Invalid invert_type. Use: 'RGB', 'R', 'G', 'B', 'Luminance'")
+                    raise ValueError("Invalid invert_type. Use: 'RGB', 'R', 'G', 'B', 'Lum'")
                 
                 # Clamp to [0, 255]
                 inv_r, inv_g, inv_b = max(0, min(255, inv_r)), max(0, min(255, inv_g)), max(0, min(255, inv_b))
@@ -1748,3 +1295,21 @@ def multiply(img: Image.Image, factor: float, allowValueOverflow:bool = False) -
             out.putpixel((x, y), (new_r, new_g, new_b))
     
     return out
+
+def lerp(img1: Image.Image, img2: Image.Image,  mask: Image.Image) -> Image.Image:
+    if mask.mode != "L":
+        mask = mask.convert("L")
+
+    for x in range(img1.size[0]):
+        for y in range(img1.size[1]):
+            pixel1 = img1.getpixel((x, y))
+            pixel2 = img2.getpixel((x, y))
+            mask_value = mask.getpixel((x, y))[0] / 255.0
+
+            new_r = int(pixel1[0] * (1 - mask_value) + pixel2[0] * mask_value)
+            new_g = int(pixel1[1] * (1 - mask_value) + pixel2[1] * mask_value)
+            new_b = int(pixel1[2] * (1 - mask_value) + pixel2[2] * mask_value)
+
+            img1.putpixel((x, y), (new_r, new_g, new_b))
+
+    return img1

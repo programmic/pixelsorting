@@ -3,32 +3,26 @@
     {
       "type": "Blur",
       "settings": {
-        "Blur Type": "Box",
-        "Blur Kernel": 4,
+        "Mode": "Box",
+        "Kernel": 16,
         "inputs": [
           "slot0"
         ],
         "output": "slot1",
-        "mask": {
-          "enabled": false,
-          "slot": null
-        }
+        "mask": null
       },
       "output_slot": "slot1"
     },
     {
       "type": "Blur",
       "settings": {
-        "Blur Type": "Gaussian",
-        "Blur Kernel": 4,
+        "Mode": "Box",
+        "Kernel": 16,
         "inputs": [
           "slot0"
         ],
         "output": "slot2",
-        "mask": {
-          "enabled": false,
-          "slot": null
-        }
+        "mask": null
       },
       "output_slot": "slot2"
     },
@@ -40,10 +34,7 @@
           "slot2"
         ],
         "output": "slot15",
-        "mask": {
-          "enabled": false,
-          "slot": null
-        }
+        "mask": null
       },
       "output_slot": "slot15"
     }
@@ -66,5 +57,25 @@
     "slot13": false,
     "slot14": false,
     "slot15": true
+  },
+  "slot_bindings": {
+    "slot1": {
+      "source": "Blur Pass\nInputs: ",
+      "destination": [
+        "Blur"
+      ]
+    },
+    "slot2": {
+      "source": "Blur Pass\nInputs: ",
+      "destination": [
+        "Blur"
+      ]
+    },
+    "slot15": {
+      "source": "Difference Pass\nInputs: slot1, slot2",
+      "destination": [
+        "Difference"
+      ]
+    }
   }
 }

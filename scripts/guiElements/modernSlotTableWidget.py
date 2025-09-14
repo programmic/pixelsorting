@@ -171,9 +171,15 @@ class ModernSlotTableWidget(QWidget):
         self.buttons = []
         for slot_name in slots:
             btn = ModernSlotButton(slot_name)
+            btn.setCheckable(True)
             self.layout.addWidget(btn)
             self.buttons.append((slot_name, btn))
             btn.clicked.connect(self._make_click_handler(slot_name))
+            # Connect toggled to debug print and slot_clicked
+            def toggled_handler(checked, name=slot_name):
+                print(f"[DEBUG] {name} toggled: {checked}")
+                self.slot_clicked.emit(name)
+            btn.toggled.connect(toggled_handler)
             btn.setContextMenuPolicy(Qt.CustomContextMenu)
             btn.customContextMenuRequested.connect(
                 lambda pos, slot=slot_name: self._show_context_menu(slot, pos)

@@ -146,3 +146,80 @@ The tool will automatically:
    ```python
    def subtract_images(img1: Image.Image, img2: Image.Image, strength: float = 1.0) -> Image.Image:
    ```
+
+# Pixel Sorting V2
+
+## Overview
+
+This project provides a modular system for configuring and executing image render passes, with a GUI built using PySide6. The core component is the `RenderPassWidget`, which allows users to add, configure, and manage individual render passes.
+
+## Features
+
+- **RenderPassWidget**:  
+  - Represents a single render pass with configurable inputs, output, and settings.
+  - Supports dynamic input slots (1 or 2) based on pass type.
+  - Input/output slot selection with visual feedback.
+  - Settings loaded from `renderPasses.json` and cached for performance.
+  - Settings can be saved and loaded per pass.
+  - Integration with `RenderPassSettingsWidget` for pass-specific configuration.
+  - Output slot source information is updated via callback.
+  - Prevents using `slot0` as output.
+
+- **Settings Configuration**:  
+  - Settings for each render pass are defined in `renderPasses.json` at the project root.
+  - Each pass type can specify its own settings and input count.
+
+- **Callbacks**:  
+  - Slot selection and deletion are handled via callbacks for flexible integration with the main GUI.
+
+## Usage
+
+1. **Adding a Render Pass**:  
+   Instantiate `RenderPassWidget` with the desired pass type, available slots, and callbacks for slot selection and deletion.
+
+2. **Selecting Inputs/Outputs**:  
+   Click on input/output labels to select slots. The widget provides visual feedback and updates slot assignments.
+
+3. **Configuring Settings**:  
+   Use the embedded settings widget to adjust parameters specific to the render pass.
+
+4. **Saving/Loading Settings**:  
+   Use `get_settings()` to retrieve current configuration, and `load_settings(settings_dict)` to restore saved settings.
+
+## File Structure
+
+- `scripts/guiElements/renderPassWidget.py`: Main widget for configuring render passes.
+- `scripts/guiElements/renderPassSettingsWidget.py`: Widget for editing pass-specific settings.
+- `renderPasses.json`: Configuration file for available render passes and their settings.
+
+## Requirements
+
+- Python 3.x
+- PySide6
+
+## Example
+
+```python
+from scripts.guiElements.renderPassWidget import RenderPassWidget
+
+def on_select_slot(mode, widget):
+    # Handle slot selection logic
+    pass
+
+def on_delete(widget):
+    # Remove widget from GUI
+    pass
+
+widget = RenderPassWidget(
+    renderpass_type="Blur",
+    availableSlots=["slot0", "slot1", "slot2"],
+    onSelectSlot=on_select_slot,
+    onDelete=on_delete
+)
+```
+
+## Notes
+
+- The widget automatically loads settings from `renderPasses.json` and caches them.
+- Output slot selection prevents using `slot0`.
+- Settings can be loaded and saved for each pass.

@@ -86,13 +86,11 @@ def build_dependency_graph(render_pass_widgets: List['RenderPassWidget']) -> Tup
     
     # Build pass dependencies based on slot usage
     for pass_idx, widget in enumerate(render_pass_widgets):
-        dependencies = getSlotOutputs(widget)
-        
-        for slot in dependencies:
+        inputs = getSlotDependencies(widget)  # Should use input slots
+        for slot in inputs:
             if slot in slot_producers:
-                # This pass depends on all passes that produce this slot
                 for producer_idx in slot_producers[slot]:
-                    if producer_idx < pass_idx:  # Only depend on earlier passes
+                    if producer_idx < pass_idx:
                         pass_dependencies[pass_idx].add(producer_idx)
     
     return dict(pass_dependencies), dict(slot_producers)
@@ -164,63 +162,128 @@ def run_render_pass(render_pass_widget: 'RenderPassWidget', slot_table: 'ModernS
 
     # Map UI names to function names (aligned with passes.py)
     func_name_map = {
-    "PixelSort": "wrap_sort",
+    "Kuwahara": "kuwahara_wrapper",
+
+    "Lerp": "lerp",
 
     "Multiply": "multiply",
 
-    "Add (Clamp Maximum)": "maxAdd",
+    "Multiply": "multiply",
+
+    "Add (Clamp)": "maxAdd",
 
     "Difference": "difference",
 
+    "AlphaOver": "alpha_over",
+
+    "Invert": "invert",
+
+    "Blur": "blur",
+
+    "Mix (%)": "mix_percent",
+
+    "GrowCrystalls": "cristalline_expansion",
+
     "Kuwahara": "kuwahara_wrapper",
 
-    "Mix Percent": "mix_percent",
+    "Subtract": "subtract_images",
+
+    "PixelSort": "wrap_sort",
+
+    "Generate Mask (Luminance)": "luminance_mask",
+
+    "Generate Mask (Contrast)": "generate_contrast_mask",
+
+    "Lerp (Linear Interpolate)": "lerp",
+
+    "Multiply": "multiply",
+
+    "Add": "maxAdd",
+
+    "Difference": "difference",
 
     "Alpha Over": "alpha_over",
 
-        "Mix By Percent": "mix_by_percent",
-        "Blur": "blur",
-        "Invert": "invert",
-        "PixelSort": "sort",
-        "Mix Screen": "alpha_over",
-        "kuwaharaGPU": "kuwahara_gpu",
-        "Cristalline Growth": "cristalline_expansion",
-        "Subtract Images": "subtract_images",
-        "Contrast Mask": "contrast_mask",
-        "Scale to fit": "scale_image",
+    "Invert": "invert",
+
+    "Blur": "blur",
+
+    "Mix (%)": "mix_percent",
+
+    "Grow Crystall": "cristalline_expansion",
+
+    "Kuwahara": "kuwahara_wrapper",
+
+    "Subtract": "subtract_images",
+
+    "PixelSort": "wrap_sort",
+
+    "Generate Mask (Luminance)": "luminance_mask",
+
+    "Generate Mask (Contrast)": "generate_contrast_mask",
+
     }
     
     # Map UI setting names to function parameter names
     setting_name_map = {
+    "preserveEdge": "stylePapari",
+
+    "Kernel": "kernel",
+
+    "Factor": "factor",
+
+    "Factor": "factor",
+
+    "Impact": "impact_factor",
+
+    "Type": "invert_type",
+
+    "Kernel": "blur_kernel",
+
+    "Mode": "blur_type",
+
+    "percentage": "p",
+
+    "SeedCount": "c",
+
+    "preserveEdge (anisortopic only)": "stylePapari",
+
+    "RegionsCount (anisotropic only)": "regions",
+
+    "Kernel": "kernel",
+
+    "Sort Mode": "mode",
+
+    "max": "limMax",
+
+    "min": "limMin",
+
+    "Factor": "factor",
+
+    "Impact": "impact_factor",
+
+    "Type": "invert_type",
+
+    "Kernel": "blur_kernel",
+
+    "Type": "blur_type",
+
+    "percentage": "p",
+
+    "Seeds Count": "c",
+
+    "preserveEdge": "stylePapari",
+
+    "RegionsCount": "regions",
+
+    "Kernel": "kernel",
+
     "Mode": "mode",
 
-    "regionsCount": "regions",
+    "Max": "limMax",
 
-    "KernelSize": "kernel",
+    "Min": "limMin",
 
-    "%": "p",
-
-    "Region count*": "regions",
-
-        # Blur settings
-        "Blur Type": "blur_type",
-        "Blur Kernel": "blur_kernel",
-        # Invert settings
-        "Invert type": "invert_type",
-        "Impact Factor": "impact_factor",
-        # Mix settings
-        "Mix Factor": "mix_factor",
-        # Kuwahara settings
-        "kernel_size": "kernel_size",
-        # Crystalline Growth settings
-        "Cluster Seeds (%)": "c",
-        # Scale settings
-        "Downscale [%]": "downscale",
-        # PixelSort UI (handled specially below)
-        "Use vSplitting?": "vSplitting",
-        "Flip Horizontal": "flipHorz",
-        "Flip Vertical": "flipVert",
-        # Contrast Mask handled specially (Luminance Range -> lim_lower/lim_upper)
     }
     
     func_name = func_name_map.get(renderpass_type)
@@ -234,6 +297,7 @@ def run_render_pass(render_pass_widget: 'RenderPassWidget', slot_table: 'ModernS
         mapped_key = setting_name_map.get(key, key)
         mapped_settings[mapped_key] = value
     settings = mapped_settings
+
 
     # Special-case transformations based on pass type
     if renderpass_type == "Contrast Mask":
@@ -252,6 +316,17 @@ def run_render_pass(render_pass_widget: 'RenderPassWidget', slot_table: 'ModernS
         # Provide sensible defaults if not present
         settings.setdefault("mode", "lum")
         settings.setdefault("rotate", False)
+
+    # Ensure blur_kernel is always a valid int for blur passes
+    if func_name in ["blur_box_gpu", "blur_box"]:
+        blur_kernel = settings.get("blur_kernel")
+        if blur_kernel is None:
+            blur_kernel = 3  # Default value
+        try:
+            blur_kernel = int(blur_kernel)
+        except Exception:
+            blur_kernel = 3
+        settings["blur_kernel"] = blur_kernel
 
     func = getattr(passes, func_name)
     sig = inspect.signature(func)
@@ -289,6 +364,16 @@ def run_render_pass(render_pass_widget: 'RenderPassWidget', slot_table: 'ModernS
         # Handle regular settings
         elif param_name in settings:
             val = settings[param_name]
+            # Sanitize blank strings and None before type conversion
+            if val is None or (isinstance(val, str) and val.strip() == ""):
+                if param.annotation == int:
+                    val = 0
+                elif param.annotation == float:
+                    val = 0.0
+                elif param.annotation == bool:
+                    val = False
+                else:
+                    val = ""
             # Automatisch typisieren
             try:
                 if param.annotation == int:
