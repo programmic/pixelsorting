@@ -16,7 +16,6 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtCore import Qt, QObject, Signal, QThread
 import superqt
 import os
-import main
 
 class ImageDropLabel(QLabel):
     def __init__(self, parent=None):
@@ -58,8 +57,7 @@ class Worker(QObject):
         self.settings = settings
 
     def run(self):
-        import main  # sicherstellen, dass du nicht im globalen Namespace importierst
-        main.process_image(
+        self.process_image(
             image=self.image,
             contrastLimLower=self.settings['contrastLimLower'],
             contrastLimUpper=self.settings['contrastLimUpper'],
@@ -84,8 +82,8 @@ class PreviewWorker(QObject):
         self.high = contrastLimUpper
 
     def run(self):
-        from main import passes  # lokaler Import, um Zyklus zu vermeiden
-        result = passes.contrastMask(self.image, self.low, self.high)
+        from passes import contrastMask
+        result = contrastMask(self.image, self.low, self.high)
         self.resultReady.emit(result)
         self.finished.emit()
 

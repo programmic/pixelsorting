@@ -14,6 +14,42 @@ import math
 
 
 class ModernSlotButton(QPushButton):
+    def dragEnterEvent(self, event):
+        """Accept drag events for slot button with visual feedback."""
+        if event.mimeData().hasText() or event.mimeData().hasUrls():
+            event.acceptProposedAction()
+            self.setStyleSheet("border: 2px solid #4caf50; background-color: rgba(76, 175, 80, 0.2);")
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        """Provide feedback during drag move over slot button."""
+        if event.mimeData().hasText() or event.mimeData().hasUrls():
+            event.acceptProposedAction()
+            self.setStyleSheet("border: 2px solid #4caf50; background-color: rgba(76, 175, 80, 0.2);")
+        else:
+            event.ignore()
+
+    def dragLeaveEvent(self, event):
+        """Reset style on drag leave."""
+        self.setStyleSheet("")
+        event.accept()
+
+    def dropEvent(self, event):
+        """Propagate drop event to parent widget for handling."""
+        self.setStyleSheet("")
+        # Forward event to parent (ModernSlotTableWidget)
+        parent = self.parent()
+        if parent:
+            # Map event position to parent coordinates
+            from PySide6.QtCore import QPoint
+            mapped_event = type(event)(event)
+            mapped_event.setDropAction(event.dropAction())
+            mapped_event.setMimeData(event.mimeData())
+            mapped_event.setPos(self.mapToParent(event.pos()))
+            parent.dropEvent(mapped_event)
+        else:
+            event.ignore()
     """A modern styled button for slot display with proper scaling and animations."""
     
     def __init__(self, slot_name, parent=None):
@@ -317,7 +353,7 @@ class ModernSlotTableWidget(QWidget):
         
     def dragEnterEvent(self, event):
         """Accept drag events with visual feedback."""
-        if event.mimeData().hasText():
+        if event.mimeData().hasText() or event.mimeData().hasUrls():
             event.acceptProposedAction()
             self.setStyleSheet("""
                 ModernSlotTableWidget { 
@@ -330,9 +366,8 @@ class ModernSlotTableWidget(QWidget):
             
     def dragMoveEvent(self, event):
         """Handle drag move events to provide visual feedback."""
-        if event.mimeData().hasText():
+        if event.mimeData().hasText() or event.mimeData().hasUrls():
             event.acceptProposedAction()
-            
             # Check if we're over any button
             drop_pos = event.pos()
             for slot_name, btn in self.buttons:
@@ -360,28 +395,37 @@ class ModernSlotTableWidget(QWidget):
             btn.setStyleSheet("")
         
     def dropEvent(self, event):
-        """Handle drop events with proper positioning."""
+        """Handle drop events with proper positioning and support for file/image drops."""
         drop_pos = event.pos()
-        
+        handled = False
+        # Try to extract filename or image data from mime data (text, urls, or image data)
+        filename = None
+        image_data = None
+        if event.mimeData().hasText():
+            filename = event.mimeData().text().strip()
+        elif event.mimeData().hasUrls():
+            urls = event.mimeData().urls()
+            if urls:
+                filename = urls[0].toLocalFile()
+        if event.mimeData().hasFormat("image/png"):
+            image_data = event.mimeData().data("image/png")
         # Find which button was dropped on
         for slot_name, btn in self.buttons:
-            # Convert drop position to button coordinates
             btn_pos = btn.mapFrom(self, drop_pos)
             if btn.rect().contains(btn_pos):
-                if event.mimeData().hasText():
-                    filename = event.mimeData().text()
-                    
-                    # Get the main GUI instance through window()
-                    main_gui = self.window()
-                    if hasattr(main_gui, 'imported_images') and filename in main_gui.imported_images:
+                main_gui = self.window()
+                found = False
+                # 1. Try imported_images by filename
+                if filename:
+                    if hasattr(main_gui, 'imported_images') and filename in getattr(main_gui, 'imported_images', {}):
                         image = main_gui.imported_images[filename]
                         self.set_image(slot_name, image)
                         self.image_dropped.emit(slot_name, image)
                         event.acceptProposedAction()
-                        self.setStyleSheet("")
-                        return
+                        handled = True
+                        found = True
                     else:
-                        # Try alternative method to find imported images
+                        # Try parent chain for imported_images
                         parent = self.parent()
                         while parent:
                             if hasattr(parent, 'imported_images'):
@@ -390,17 +434,49 @@ class ModernSlotTableWidget(QWidget):
                                     self.set_image(slot_name, image)
                                     self.image_dropped.emit(slot_name, image)
                                     event.acceptProposedAction()
-                                    self.setStyleSheet("")
-                                    return
+                                    handled = True
+                                    found = True
+                                    break
                                 break
                             parent = parent.parent()
-                        
-                        # If we get here, the image wasn't found
-                        print(f"Warning: Image '{filename}' not found in imported images")
-                
-                event.ignore()
-                break
-                
+                # 2. If not found, try to load from file (external drag)
+                if not found and filename:
+                    import os
+                    from PIL import Image
+                    if os.path.isfile(filename):
+                        try:
+                            image = Image.open(filename)
+                            self.set_image(slot_name, image)
+                            self.image_dropped.emit(slot_name, image)
+                            event.acceptProposedAction()
+                            handled = True
+                            found = True
+                        except Exception as e:
+                            print(f"Error loading dropped image file: {e}")
+                    else:
+                        print(f"Dropped file does not exist: {filename}")
+                # 3. If not found and image data is present, use it
+                if not found and image_data:
+                    from PIL import Image
+                    from io import BytesIO
+                    try:
+                        image = Image.open(BytesIO(image_data))
+                        self.set_image(slot_name, image)
+                        self.image_dropped.emit(slot_name, image)
+                        event.acceptProposedAction()
+                        handled = True
+                        found = True
+                    except Exception as e:
+                        print(f"Error loading dropped image from bytes: {e}")
+                if not handled:
+                    # Show feedback for invalid drop
+                    from PySide6.QtWidgets import QMessageBox
+                    QMessageBox.warning(self, "Drop Failed", "Could not import the dropped image.")
+                    event.ignore()
+                self.setStyleSheet("")
+                return
+        if not handled:
+            event.ignore()
         self.setStyleSheet("")
         
     def sizeHint(self):

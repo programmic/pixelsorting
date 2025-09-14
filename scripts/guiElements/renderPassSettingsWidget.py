@@ -250,13 +250,13 @@ class RenderPassSettingsWidget(QWidget):
                 v_layout.addWidget(slider_widget)
                 widget.setLayout(v_layout)
 
-                self.controls[label_text] = {'slider': slider, 'value_edit': value_edit, '_widget': widget}
+                self.controls[key] = {'slider': slider, 'value_edit': value_edit, '_widget': widget}
                 self.layout.addWidget(widget)
                 continue
                 widget.setLayout(v_layout)
                 self.layout.addWidget(widget)
                 # Store both slider and value_edit under the label for easy access
-                self.controls[label_text] = {'slider': slider, 'value_edit': value_edit}
+                self.controls[key] = {'slider': slider, 'value_edit': value_edit}
                 continue
             else:
                 # If we had switches and now getting another control type
@@ -270,8 +270,8 @@ class RenderPassSettingsWidget(QWidget):
             # Regular control processing (non-switch)
             if t == "switch":
                 toggle = QToggleSwitch()
-                toggle.setObjectName(label_text)
-                self.controls[label_text] = toggle
+                toggle.setObjectName(key)
+                self.controls[key] = toggle
                 self.layout.addWidget(toggle)
 
                 print(f"[DEBUG] Switch created: {label_text}")
@@ -341,7 +341,7 @@ class RenderPassSettingsWidget(QWidget):
                 v_layout.addWidget(label)
                 v_layout.addWidget(combo)
                 widget.setLayout(v_layout)
-                self.controls[label_text] = combo
+                self.controls[key] = combo
                 control = widget
 
             elif t in ["slider", "multislider", "dualslider"]:

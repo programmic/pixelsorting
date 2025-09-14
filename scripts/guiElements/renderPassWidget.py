@@ -9,6 +9,14 @@ import json
 import os
 
 class RenderPassWidget(QWidget):
+    def _on_output_click(self, event):
+        self.selectionMode = 'output'
+        self.currentSelectedInput = None
+        for label in self.inputLabels:
+            label.setStyleSheet("background-color: #f8f9fa; color: #333; padding: 4px; border-radius: 4px; min-width: 90px; font-weight: 600;")
+        self.outputLabel.setStyleSheet("background-color: #1976d2; color: #fff; font-weight: bold; padding: 4px; border-radius: 4px; min-width: 90px;")
+        if self.onSelectSlot:
+            self.onSelectSlot('output', self)
     """
     Widget representing a single render pass with configurable inputs, output, and settings.
     Supports 1 or 2 input slots depending on pass type.
@@ -22,6 +30,7 @@ class RenderPassWidget(QWidget):
 
     def __init__(self, renderpass_type: str, availableSlots: list[str], onSelectSlot: Callable, onDelete: Callable, onUpdateSlotSource: Optional[Callable] = None, saved_settings: Optional[dict] = None):
         super().__init__()
+        self.collapsed = False  # Ensure this is set before anything else
         self.renderpass_type = renderpass_type
         self.availableSlots = availableSlots
         self.onSelectSlot = onSelectSlot
@@ -39,7 +48,7 @@ class RenderPassWidget(QWidget):
         self.mainLayout = QVBoxLayout(self)
         self.mainLayout.setContentsMargins(4, 4, 4, 4)
 
-        # Create title bar with drag handle and delete button
+        # Create title bar with drag handle, collapse button, and delete button
         top = QHBoxLayout()
         top.setContentsMargins(4, 4, 4, 4)
         top.setSpacing(4)
@@ -53,122 +62,87 @@ class RenderPassWidget(QWidget):
         top.addWidget(self.title)
         top.addStretch()
 
+        # Collapse/expand button
+        self.collapseBtn = QPushButton("−")
+        self.collapseBtn.setFixedWidth(24)
+        self.collapseBtn.setToolTip("Collapse/Expand")
+        self.collapseBtn.setCheckable(True)
+        self.collapseBtn.setChecked(False)
+        self.collapseBtn.clicked.connect(self.toggle_collapsed)
+        top.addWidget(self.collapseBtn)
+
         self.deleteBtn = QPushButton("✖")
         self.deleteBtn.setFixedWidth(30)
         self.deleteBtn.clicked.connect(self._delete_self)
         top.addWidget(self.deleteBtn)
         self.mainLayout.addLayout(top)
 
+        # --- Mask Layout (separate, less prominent) ---
+        self.maskLayout = QHBoxLayout()
+        self.maskLabel = QLabel("Mask: <none>")
+        self.maskLabel.setStyleSheet("""
+            background-color: #ededed;
+            color: #888;
+            padding: 2px 4px;
+            border-radius: 4px;
+            min-width: 70px;
+            font-size: 11px;
+        """)
+        self.maskLabel.mousePressEvent = self._on_mask_click
+        self.maskLayout.addWidget(self.maskLabel)
+        self.maskLayout.addStretch()
+        self.selectedMask = None
+        self.maskLayout.setContentsMargins(4, 0, 4, 4)
+        self.maskLayout.setSpacing(2)
+
+        # --- IO Layout (inputs/outputs) ---
         self.ioLayout = QHBoxLayout()
         self.inputLabels = []
         for i in range(self.numInputs):
             label = QLabel(f"Input {i+1}: <none>")
-            label.setStyleSheet("""
-                background-color: lightgray;
-                padding: 4px;
-                border-radius: 4px;
-                min-width: 80px;
-            """)
-            label.mousePressEvent = lambda e, idx=i: self._on_input_click(e, idx)
+            label.setStyleSheet("background-color: #f8f9fa; color: #333; padding: 4px; border-radius: 4px; min-width: 90px; font-weight: 600;")
+            label.mousePressEvent = lambda event, idx=i: self._on_input_click(idx)
             self.ioLayout.addWidget(label)
             self.inputLabels.append(label)
-
         self.outputLabel = QLabel("Output: <none>")
-        self.outputLabel.setStyleSheet("""
-            background-color: lightgray;
-            padding: 4px;
-            border-radius: 4px;
-            min-width: 80px;
-        """)
+        self.outputLabel.setStyleSheet("background-color: #f8f9fa; color: #333; padding: 4px; border-radius: 4px; min-width: 90px; font-weight: 600;")
         self.outputLabel.mousePressEvent = self._on_output_click
         self.ioLayout.addWidget(self.outputLabel)
+        self.ioLayout.setContentsMargins(4, 0, 4, 4)
+        self.ioLayout.setSpacing(2)
 
-        # Mask selection (slot system)
-        self.maskLabel = QLabel("Mask: <none>")
-        self.maskLabel.setStyleSheet("""
-            background-color: lightgray;
-            padding: 4px;
-            border-radius: 4px;
-            min-width: 80px;
-        """)
-        self.maskLabel.mousePressEvent = self._on_mask_click
-        self.ioLayout.addWidget(self.maskLabel)
-        self.selectedMask = None
+        # --- Collapsible content area ---
+        self.contentWidget = QWidget()
+        self.contentLayout = QVBoxLayout(self.contentWidget)
+        self.contentLayout.setContentsMargins(0, 0, 0, 0)
+        self.contentLayout.setSpacing(0)
+        # Move IO and mask layouts into content area
+        self.contentLayout.addLayout(self.ioLayout)
+        self.contentLayout.addLayout(self.maskLayout)
 
-        self.ioLayout.setContentsMargins(4, 4, 4, 4)
-        self.ioLayout.setSpacing(4)
-        self.mainLayout.addLayout(self.ioLayout)
-
-        settingsConfig = self.get_settings_config(renderpass_type)
+        settingsConfig = self.get_settings_config(self.renderpass_type)
         saved_settings = {}
         if self.savedSettings and 'settings' in self.savedSettings:
             saved_settings = self.savedSettings['settings']
         self.settingsWidget = RenderPassSettingsWidget(settingsConfig, saved_settings)
-        self.mainLayout.addWidget(self.settingsWidget)
+        self.contentLayout.addWidget(self.settingsWidget)
 
+        self.mainLayout.addWidget(self.contentWidget)
         self.selectionMode = None
         self.currentSelectedInput = None
-
-    def _on_input_click(self, event, input_idx):
-        self.selectionMode = 'input'
-        self.currentSelectedInput = input_idx
-        for i, label in enumerate(self.inputLabels):
-            label.setStyleSheet(
-                ("background-color: #a0c4ff;" if i == input_idx else "background-color: lightgray;")
-                + "padding: 4px; border-radius: 4px; min-width: 80px;"
-            )
-        self.outputLabel.setStyleSheet("""
-            background-color: lightgray;
-            padding: 4px;
-            border-radius: 4px;
-            min-width: 80px;
-        """)
-        self.maskLabel.setStyleSheet("""
-            background-color: lightgray;
-            padding: 4px;
-            border-radius: 4px;
-            min-width: 80px;
-        """)
-        self.onSelectSlot('input', self)
-
-    def _on_output_click(self, event):
-        self.selectionMode = 'output'
-        self.currentSelectedInput = None
-        for label in self.inputLabels:
-            label.setStyleSheet("""
-                background-color: lightgray;
-                padding: 4px;
-                border-radius: 4px;
-                min-width: 80px;
-            """)
-        self.outputLabel.setStyleSheet(
-            "background-color: #a0c4ff; padding: 4px; border-radius: 4px; min-width: 80px;"
-        )
-        self.maskLabel.setStyleSheet("""
-            background-color: lightgray;
-            padding: 4px;
-            border-radius: 4px;
-            min-width: 80px;
-        """)
-        self.onSelectSlot('output', self)
-
+        self.collapsed = False
+    def toggle_collapsed(self):
+        self.collapsed = not self.collapsed
+        if hasattr(self, 'contentWidget'):
+            self.contentWidget.setVisible(not self.collapsed)
+        self.collapseBtn.setText("+" if self.collapsed else "−")
     def _on_mask_click(self, event):
         self.selectionMode = 'mask'
         self.currentSelectedInput = None
         for label in self.inputLabels:
-            label.setStyleSheet("""
-                background-color: lightgray;
-                padding: 4px;
-                border-radius: 4px;
-                min-width: 80px;
-            """)
-        self.maskLabel.setStyleSheet("background-color: #a0c4ff; padding: 4px; border-radius: 4px; min-width: 80px;")
-        self.outputLabel.setStyleSheet("""
-            background-color: lightgray;
-            padding: 4px;
-            border-radius: 4px;
-            min-width: 80px;
-        """)
+            label.setStyleSheet("background-color: #f8f9fa; color: #333; padding: 4px; border-radius: 4px; min-width: 90px; font-weight: 600;")
+        self.maskLabel.setStyleSheet("background-color: #1976d2; color: #fff; font-weight: bold; padding: 2px 4px; border-radius: 4px; min-width: 70px; font-size: 11px;")
+        self.outputLabel.setStyleSheet("background-color: #f8f9fa; color: #333; padding: 4px; border-radius: 4px; min-width: 90px; font-weight: 600;")
         self.onSelectSlot('mask', self)
 
     def set_slot(self, slot_name):

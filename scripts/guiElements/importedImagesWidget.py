@@ -7,6 +7,30 @@ from .previewManager import preview_manager
 import os
 
 class ImportedImagesListWidget(QListWidget):
+    def dragEnterEvent(self, event):
+        """Highlight widget on drag enter if valid."""
+        if event.mimeData().hasUrls() or event.mimeData().hasText() or event.mimeData().hasFormat("image/png"):
+            event.acceptProposedAction()
+            self.setStyleSheet(self.styleSheet() + "\nQListWidget { border: 2px solid #4caf50; background: #e8f5e9; }")
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        """Keep highlight during drag move if valid."""
+        if event.mimeData().hasUrls() or event.mimeData().hasText() or event.mimeData().hasFormat("image/png"):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragLeaveEvent(self, event):
+        """Remove highlight on drag leave."""
+        self.setStyleSheet(self.styleSheet().replace("\nQListWidget { border: 2px solid #4caf50; background: #e8f5e9; }", ""))
+        event.accept()
+
+    def dropEvent(self, event):
+        """Remove highlight on drop and handle as before."""
+        self.setStyleSheet(self.styleSheet().replace("\nQListWidget { border: 2px solid #4caf50; background: #e8f5e9; }", ""))
+        # ...existing code...
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setDragEnabled(True)
@@ -38,32 +62,38 @@ class ImportedImagesListWidget(QListWidget):
         self.addItem(filename)
         
     def mousePressEvent(self, event):
-        """Handle drag start."""
+        """Handle drag start with richer MIME data."""
         super().mousePressEvent(event)
         if event.button() == Qt.LeftButton:
             item = self.itemAt(event.pos())
             if item and item.text() in self.images:
-                # Create drag
                 drag = QDrag(self)
                 mime_data = QMimeData()
-                mime_data.setText(item.text())
+                filename = item.text()
+                mime_data.setText(filename)
+                # Set a file URL for compatibility
+                import os
+                from PySide6.QtCore import QUrl
+                file_path = os.path.abspath(filename)
+                mime_data.setUrls([QUrl.fromLocalFile(file_path)])
+                # Add image data as bytes (PNG format)
+                from io import BytesIO
+                image = self.images[filename]
+                buffer = BytesIO()
+                image.save(buffer, format="PNG")
+                mime_data.setData("image/png", buffer.getvalue())
                 drag.setMimeData(mime_data)
-                
                 # Show message about drag starting
                 parent = self.parent()
                 while parent and not hasattr(parent, 'show_message'):
                     parent = parent.parent()
                 if parent and hasattr(parent, 'show_message'):
-                    parent.show_message(f"Dragging image '{item.text()}'")
-                
+                    parent.show_message(f"Dragging image '{filename}'")
                 # Create preview pixmap for drag
-                image = self.images[item.text()]
                 pixmap = QPixmap.fromImage(ImageQt(image))
                 scaled_pixmap = pixmap.scaled(32, 32, Qt.KeepAspectRatio, Qt.SmoothTransformation)
                 drag.setPixmap(scaled_pixmap)
                 drag.setHotSpot(QPoint(16, 16))
-                
-                # Start drag
                 drag.exec_(Qt.CopyAction)
 
     def mouseMoveEvent(self, event):
@@ -99,64 +129,6 @@ class ImportedImagesListWidget(QListWidget):
         """Hide the preview widget."""
         preview_manager.hide_preview()
 
-    def dragEnterEvent(self, event):
-        """Handle drag enter events for file drops."""
-        if event.mimeData().hasUrls():
-            # Check if any URLs are image files
-            urls = event.mimeData().urls()
-            for url in urls:
-                if url.isLocalFile():
-                    file_path = url.toLocalFile()
-                    if self._is_valid_image_file(file_path):
-                        event.acceptProposedAction()
-                        return
-        event.ignore()
-
-    def dragMoveEvent(self, event):
-        """Handle drag move events."""
-        if event.mimeData().hasUrls():
-            event.acceptProposedAction()
-        else:
-            event.ignore()
-
-    def dropEvent(self, event):
-        """Handle drop events for file drops."""
-        if event.mimeData().hasUrls():
-            urls = event.mimeData().urls()
-            imported_count = 0
-            failed_files = []
-            
-            for url in urls:
-                if url.isLocalFile():
-                    file_path = url.toLocalFile()
-                    if self._is_valid_image_file(file_path):
-                        try:
-                            image = Image.open(file_path)
-                            filename = os.path.basename(file_path)
-                            self.images[filename] = image
-                            self.addItem(filename)
-                            imported_count += 1
-                        except Exception as e:
-                            failed_files.append(f"{filename}: {str(e)}")
-            
-            # Show feedback
-            parent = self.parent()
-            while parent and not hasattr(parent, 'show_message'):
-                parent = parent.parent()
-            
-            if imported_count > 0:
-                message = f"Successfully imported {imported_count} image(s)"
-                if failed_files:
-                    message += f", {len(failed_files)} failed"
-                if parent and hasattr(parent, 'show_message'):
-                    parent.show_message(message)
-            
-            if failed_files and parent and hasattr(parent, 'show_message'):
-                parent.show_message(f"Failed to import: {', '.join(failed_files)}")
-                
-            event.acceptProposedAction()
-        else:
-            event.ignore()
 
     def _is_valid_image_file(self, file_path):
         """Check if a file is a valid image file."""

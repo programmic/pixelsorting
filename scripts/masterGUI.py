@@ -36,13 +36,199 @@ class SearchableReorderableListWidget(QSearchableListWidget):
 class GUI(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Renderpass GUI with Mask Support")
         self.available_slots = [f"slot{i}" for i in range(16)]
-        self.slot_usage = {}
-        self.currentSelectionMode = None
         self.currentWidget = None
         self.original_image_slots = set()
         self.imported_images = {}  # Dictionary to store imported images
+        # Setup render thread and worker
+        self.render_thread = None
+        self.render_worker = None
+
+        # Load renderPasses.json to get available passes
+        try:
+            # Get the directory where this script is located
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            # Go up one level to project root
+            project_root = os.path.dirname(script_dir)
+            json_path = os.path.join(project_root, 'renderPasses.json')
+            with open(json_path, 'r', encoding='utf-8') as f:
+                self.render_passes_config = json.load(f)
+                print(f"Successfully loaded {len(self.render_passes_config)} render passes from JSON")
+        except Exception as e:
+            print(f"Error loading renderPasses.json: {e}")
+            self.render_passes_config = {}
+
+        main_layout = QHBoxLayout(self)
+        
+        # Left side with slot table and status bar
+        left_center = QVBoxLayout()
+        
+        # --- Collapse/Expand All Buttons ---
+        collapse_layout = QHBoxLayout()
+        self.collapse_all_btn = QPushButton("Collapse All")
+        self.collapse_all_btn.clicked.connect(self.collapse_all_renderpasses)
+        collapse_layout.addWidget(self.collapse_all_btn)
+        self.uncollapse_all_btn = QPushButton("Uncollapse All")
+        self.uncollapse_all_btn.clicked.connect(self.uncollapse_all_renderpasses)
+        collapse_layout.addWidget(self.uncollapse_all_btn)
+        left_center.addLayout(collapse_layout)
+
+        # Slot table
+        self.slotTable = ModernSlotTableWidget(self.available_slots)
+        left_center.addWidget(self.slotTable)
+        
+        # Status bar for feedback
+        self.status_bar = QLabel()
+        self.status_bar.setStyleSheet("color: #666; padding: 5px;")
+        left_center.addWidget(self.status_bar)
+        
+        def show_message(self, message):
+            """Display a message in the status bar."""
+            self.status_bar.setText(message)
+            print(message)  # Also print to console for debugging
+        
+        self.show_message = show_message.__get__(self)
+        
+        self.listWidget = SearchableReorderableListWidget()
+        left_center.addWidget(self.listWidget, stretch=1)
+
+        # Add progress bar and status label
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setMinimum(0)
+        self.progress_bar.setMaximum(0)  # Indeterminate progress
+        self.progress_bar.hide()
+        left_center.addWidget(self.progress_bar)
+        
+        self.status_label = QLabel()
+        self.status_label.hide()
+        left_center.addWidget(self.status_label)
+        
+        # Add Run Rendering and Output Folder buttons
+        button_layout = QHBoxLayout()
+        
+        self.run_button = QPushButton("Run Rendering")
+        self.run_button.clicked.connect(self.runRendering)
+        button_layout.addWidget(self.run_button)
+        
+        self.open_output_button = QPushButton("Open Output Folder")
+        self.open_output_button.clicked.connect(self.openOutputFolder)
+        button_layout.addWidget(self.open_output_button)
+        
+        left_center.addLayout(button_layout)
+
+        # Add Save/Load buttons
+        button_layout = QHBoxLayout()
+        self.save_button = QPushButton("Save Project")
+        self.save_button.clicked.connect(self.saveProject)
+        button_layout.addWidget(self.save_button)
+        
+        self.load_button = QPushButton("Load Project")
+        self.load_button.clicked.connect(self.loadProject)
+        button_layout.addWidget(self.load_button)
+        
+        left_center.addLayout(button_layout)
+
+        main_layout.addLayout(left_center, stretch=1)
+        
+        # Right side with tools
+        rightSideLayout = QVBoxLayout()
+        rightSideLayout.setSpacing(10)
+
+        # Select Image Section
+        self.selectImageButton = QPushButton("Select Image")
+        self.selectImageButton.setStyleSheet("""
+            QPushButton {
+                padding: 8px;
+                background: #4CAF50;
+                color: white;
+                border: none;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background: #45a049;
+            }
+        """)
+        self.selectImageButton.clicked.connect(self.select_image)
+        rightSideLayout.addWidget(self.selectImageButton)
+
+        # Imported Images List
+        importLabel = QLabel("Imported Images:")
+        importLabel.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        rightSideLayout.addWidget(importLabel)
+        self.imported_images_list = ImportedImagesListWidget()
+        self.imported_images_list.setMaximumHeight(150)
+        rightSideLayout.addWidget(self.imported_images_list)
+
+        # Preload a default image from assets/images for faster testing
+        try:
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            project_root = os.path.dirname(script_dir)
+            images_dir = os.path.join(project_root, 'assets', 'images')
+            image_files = [f for f in os.listdir(images_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tiff', '.tif', '.webp'))]
+            if image_files:
+                default_image_path = os.path.join(images_dir, random.choice(image_files))
+            else:
+                default_image_path = None
+            if os.path.exists(default_image_path):
+                from PIL import Image
+                image = Image.open(default_image_path).convert("RGB")
+                filename = os.path.basename(default_image_path)
+                self.imported_images[filename] = image
+                self.imported_images_list.addImage(filename, image)
+        except Exception as e:
+            print(f"[Warning] Could not preload default image: {e}")
+
+        # Pass selection
+        passLabel = QLabel("Available render passes:")
+        passLabel.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        rightSideLayout.addWidget(passLabel)
+        self.passList = QListWidget()
+        self.passList.setStyleSheet("""
+            QListWidget {
+                border: 1px solid #ccc;
+                border-radius: 4px;
+            }
+            QListWidget::item {
+                padding: 4px;
+            }
+            QListWidget::item:hover {
+                background: #f0f0f0;
+            }
+            QListWidget::item:selected {
+                background: #e0e0e0;
+                color: black;
+            }
+        """)
+        self.pass_display_names = list(self.render_passes_config.keys())
+        self.passList.addItems(self.pass_display_names)
+        self.passList.setFixedWidth(200)
+        rightSideLayout.addWidget(self.passList)
+
+        main_layout.addLayout(rightSideLayout)
+
+        self.passList.itemClicked.connect(self.on_pass_selected)
+        self.slotTable.slot_clicked.connect(self.onSlotClicked)
+        
+        # Connect context menu signals
+        self.slotTable.context_menu.slot_learn_requested.connect(self.onSlotLearnRequested)
+        self.slotTable.context_menu.slot_clear_requested.connect(self.onSlotClearRequested)
+        self.slotTable.context_menu.slot_preview_requested.connect(self.onSlotPreviewRequested)
+        
+        self.updateSlotUsage()
+
+    def collapse_all_renderpasses(self):
+        lw = self.listWidget.list_widget
+        for i in range(lw.count()):
+            widget = lw.itemWidget(lw.item(i))
+            if widget and hasattr(widget, 'collapsed') and not widget.collapsed:
+                widget.toggle_collapsed()
+
+    def uncollapse_all_renderpasses(self):
+        lw = self.listWidget.list_widget
+        for i in range(lw.count()):
+            widget = lw.itemWidget(lw.item(i))
+            if widget and hasattr(widget, 'collapsed') and widget.collapsed:
+                widget.toggle_collapsed()
         
         # Setup render thread and worker
         self.render_thread = None

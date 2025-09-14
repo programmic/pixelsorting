@@ -270,7 +270,8 @@
       "original_func_name": null
     },
     {
-      "label": "Kernel",
+      "label": "Kernel Size",
+      "alias": "kernel_size",
       "type": "slider",
       "min": 2.0,
       "max": 128.0,
@@ -278,12 +279,14 @@
       "integer": true
     },
     {
-      "label": "isAnisotropic",
+      "label": "Anisotropic",
+      "alias": "is_anisotropic",
       "type": "switch",
       "default": true
     },
     {
-      "label": "regions",
+      "label": "Regions",
+      "alias": "regions",
       "type": "slider",
       "min": 3.0,
       "max": 24.0,
@@ -291,7 +294,8 @@
       "integer": true
     },
     {
-      "label": "preserveEdge",
+      "label": "Preserve Edge",
+      "alias": "preserve_edge",
       "type": "switch",
       "default": true
     }
