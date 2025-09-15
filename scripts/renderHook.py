@@ -164,6 +164,14 @@ def run_render_pass(render_pass_widget: 'RenderPassWidget', slot_table: 'ModernS
     func_name_map = {
     "Kuwahara": "kuwahara_wrapper",
 
+    "PixelSort": "wrap_sort",
+
+    "Generate Mask [Contrast]": "generate_contrast_mask",
+
+    "Kuwahara": "kuwahara_wrapper",
+
+    "Kuwahara": "kuwahara_wrapper",
+
     "Lerp": "lerp",
 
     "Multiply": "multiply",
@@ -226,6 +234,20 @@ def run_render_pass(render_pass_widget: 'RenderPassWidget', slot_table: 'ModernS
     
     # Map UI setting names to function parameter names
     setting_name_map = {
+    "preserveEdge": "stylePapari",
+
+    "Kernel": "kernel",
+
+    "Mode": "mode",
+
+    "max": "limMax",
+
+    "min": "limMin",
+
+    "preserveEdge": "stylePapari",
+
+    "Kernel": "kernel",
+
     "preserveEdge": "stylePapari",
 
     "Kernel": "kernel",

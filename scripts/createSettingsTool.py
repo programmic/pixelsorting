@@ -354,15 +354,14 @@ def create_setting(param):
 
     if widget_type == 'switch':
         default = input(f"Default value for {ui_label} (y/n, default n): ").strip().lower() == 'y'
-        # Dependency prompt
         requires = {}
-        add_dep = input(f"Does this switch depend on another control? (y/n): ").strip().lower() == 'y'
+        add_dep = input(f"Do you want to link this switch to another switch? (y/n): ").strip().lower() == 'y'
         while add_dep:
-            dep_label = input("  Enter label or alias of required control: ").strip()
-            dep_val = input("  Required value for that control (y/n): ").strip().lower() == 'y'
+            dep_label = input("  Enter label or alias of the switch to link to: ").strip()
+            dep_val = input("  Required value for that switch (y/n): ").strip().lower() == 'y'
             if dep_label:
                 requires[dep_label] = dep_val
-            add_dep = input("  Add another dependency? (y/n): ").strip().lower() == 'y'
+            add_dep = input("  Link to another switch? (y/n): ").strip().lower() == 'y'
         setting = {
             "label": ui_label,
             "alias": alias,
@@ -375,8 +374,12 @@ def create_setting(param):
     elif widget_type in ['slider', 'multislider']:
         min_val = float(input(f"Min value for {ui_label}: "))
         max_val = float(input(f"Max value for {ui_label}: "))
-        default = float(input(f"Default value for {ui_label}: "))
-        # Dependency prompt
+        if widget_type == 'multislider':
+            default_min = float(input(f"Default min value for {ui_label}: "))
+            default_max = float(input(f"Default max value for {ui_label}: "))
+            default = [default_min, default_max]
+        else:
+            default = float(input(f"Default value for {ui_label}: "))
         requires = {}
         add_dep = input(f"Does this control depend on another control? (y/n): ").strip().lower() == 'y'
         while add_dep:
@@ -398,9 +401,8 @@ def create_setting(param):
             setting["requires"] = requires
         return setting
     elif widget_type in ['dropdown', 'radio']:
-        options = input(f"Comma-separated options for {ui_label}: ").split(',')
-        default = options[0].strip() if options else ''
-        # Dependency prompt
+        options = [opt.strip() for opt in input(f"Comma-separated options for {ui_label}: ").split(',') if opt.strip()]
+        default = options[0] if options else ''
         requires = {}
         add_dep = input(f"Does this control depend on another control? (y/n): ").strip().lower() == 'y'
         while add_dep:
@@ -413,7 +415,7 @@ def create_setting(param):
             "label": ui_label,
             "alias": alias,
             "type": widget_type,
-            "options": [opt.strip() for opt in options],
+            "options": options,
             "default": default
         }
         if requires:
@@ -421,7 +423,6 @@ def create_setting(param):
         return setting
     elif widget_type == 'text':
         default = input(f"Default text for {ui_label} (press Enter for none): ").strip()
-        # Dependency prompt
         requires = {}
         add_dep = input(f"Does this control depend on another control? (y/n): ").strip().lower() == 'y'
         while add_dep:
@@ -432,11 +433,23 @@ def create_setting(param):
             add_dep = input("  Add another dependency? (y/n): ").strip().lower() == 'y'
         setting = {
             "label": ui_label,
+            "alias": alias,
             "type": "text",
             "default": default
         }
         if requires:
             setting["requires"] = requires
+        return setting
+    elif widget_type == 'image_input':
+        available_slots = input(f"Available slots for {ui_label} (comma-separated, or leave blank): ").strip()
+        slots = [s.strip() for s in available_slots.split(',') if s.strip()] if available_slots else []
+        setting = {
+            "label": ui_label,
+            "alias": alias,
+            "type": "image_input"
+        }
+        if slots:
+            setting["availableSlots"] = slots
         return setting
     return None
 
@@ -830,6 +843,372 @@ def interactive_menu():
                 for func_name in missing:
                     print(f"\nConfiguring function: {func_name}")
                     try:
+                        # The main configuration logic goes here
+                        passes_path = str(Path(__file__).parent / "passes.py")
+                        func_info = extract_function_info(passes_path, func_name)
+                        if not func_info:
+                            print(f"Skipping unsupported or invalid function '{func_name}'.")
+                            continue
+                        ui_name = input(f"Enter UI name for '{func_name}' (or press Enter to use function name, or type 'skip' to skip): ").strip()
+                        if ui_name.lower() == 'skip':
+                            print(f"Skipping function '{func_name}'.")
+                            continue
+                        if ui_name.lower() == 'disable':
+                            passes_path_obj = Path(__file__).parent / "passes.py"
+                            with open(passes_path_obj, "r", encoding="utf-8") as f:
+                                lines = f.readlines()
+                            for idx, line in enumerate(lines):
+                                if line.strip().startswith(f"def {func_name}(") and "#globalignore" not in line:
+                                    lines[idx] = line.rstrip() + " #globalignore\n"
+                                    break
+                            with open(passes_path_obj, "w", encoding="utf-8") as f:
+                                f.writelines(lines)
+                            print(f"Function '{func_name}' disabled with #globalignore.")
+                            continue
+                        param_mappings = {}
+                        param_labels = []
+                        j = 0
+                        params_len = len(func_info['params'])
+                        while j < params_len:
+                            param = func_info['params'][j]
+                            ui_label = input(f"UI label for parameter '{param['name']}' (or press Enter to use same name): ").strip()
+                            if ui_label.lower() == 'edit' and j > 0:
+                                j -= 1
+                                continue
+                            if ui_label and ui_label != param['name']:
+                                param_mappings[ui_label] = param['name']
+                                param_labels.append(ui_label)
+                            else:
+                                param_labels.append(param['name'])
+                            j += 1
+                        settings = []
+                        i = 0
+                        params = func_info['params']
+                        while i < len(params):
+                            param = params[i]
+                            ui_label = param_labels[i] if i < len(param_labels) else param['name']
+                            annotation = param['annotation']
+                            if (
+                                i + 1 < len(params)
+                                and annotation in ['int', 'float']
+                                and params[i + 1]['annotation'] == annotation
+                                and 'min' in param['name'].lower()
+                                and 'max' in params[i + 1]['name'].lower()
+                            ):
+                                print(f"\nDetected consecutive '{annotation}' parameters: '{param['name']}' and '{params[i+1]['name']}'")
+                                use_multislider = input("Would you like to use a multislider for these? (y/n): ").strip().lower()
+                                if use_multislider == 'edit' and i > 0:
+                                    i -= 1
+                                    continue
+                                if use_multislider == 'y':
+                                    min_label = param_labels[i] if i < len(param_labels) else param['name']
+                                    max_label = param_labels[i+1] if i+1 < len(param_labels) else params[i+1]['name']
+                                    min_val = validate_numeric_input(input(f"Enter minimum value for {min_label}: "), min_label, is_min=True)
+                                    if str(min_val).lower() == 'edit' and i > 0:
+                                        i -= 1
+                                        continue
+                                    max_val = validate_numeric_input(input(f"Enter maximum value for {max_label}: "), max_label)
+                                    if str(max_val).lower() == 'edit' and i > 0:
+                                        i -= 1
+                                        continue
+                                    while max_val is not None and min_val is not None and max_val <= min_val:
+                                        print(f"Maximum value must be greater than minimum ({min_val})")
+                                        max_val = validate_numeric_input(input(f"Enter maximum value for {max_label}: "), max_label)
+                                        if str(max_val).lower() == 'edit' and i > 0:
+                                            i -= 1
+                                            continue
+                                    default_min = validate_numeric_input(input(f"Enter default min value: "), min_label)
+                                    if str(default_min).lower() == 'edit' and i > 0:
+                                        i -= 1
+                                        continue
+                                    default_max = validate_numeric_input(input(f"Enter default max value: "), max_label)
+                                    if str(default_max).lower() == 'edit' and i > 0:
+                                        i -= 1
+                                        continue
+                                    while (default_min is not None and default_max is not None) and (default_min < min_val or default_max > max_val or default_min > default_max):
+                                        print(f"Defaults must be within [{min_val}, {max_val}] and min <= max")
+                                        default_min = validate_numeric_input(input(f"Enter default min value: "), min_label)
+                                        if str(default_min).lower() == 'edit' and i > 0:
+                                            i -= 1
+                                            continue
+                                        default_max = validate_numeric_input(input(f"Enter default max value: "), max_label)
+                                        if str(default_max).lower() == 'edit' and i > 0:
+                                            i -= 1
+                                            continue
+                                    settings.append({
+                                        "label": f"{min_label} / {max_label}",
+                                        "type": "multislider",
+                                        "min": min_val,
+                                        "max": max_val,
+                                        "default": [default_min, default_max],
+                                        "integer": annotation == 'int'
+                                    })
+                                    i += 2
+                                    continue
+                            print(f"\nConfiguring parameter: {ui_label}")
+                            if annotation == 'bool':
+                                print("Type: Boolean switch")
+                                default_str = input("Enable by default? (y/n): ").strip().lower()
+                                if default_str not in ['y', 'n']:
+                                    print("Invalid input. Using default value: false")
+                                    default_str = 'n'
+                                settings.append({
+                                    "label": ui_label,
+                                    "type": "switch",
+                                    "default": default_str == 'y'
+                                })
+                            elif annotation in ['int', 'float']:
+                                print(f"Type: {'Integer' if annotation == 'int' else 'Float'} slider")
+                                while True:
+                                    min_val = validate_numeric_input(
+                                        input(f"Enter minimum value for {ui_label}: "),
+                                        ui_label,
+                                        is_min=True
+                                    )
+                                    if min_val is not None:
+                                        break
+                                while True:
+                                    max_val = validate_numeric_input(
+                                        input(f"Enter maximum value for {ui_label}: "),
+                                        ui_label
+                                    )
+                                    if max_val is not None and max_val > min_val:
+                                        break
+                                    print(f"Maximum value must be greater than minimum ({min_val})")
+                                while True:
+                                    default = validate_numeric_input(
+                                        input(f"Enter default value for {ui_label}: "),
+                                        ui_label
+                                    )
+                                    if default is not None and min_val <= default <= max_val:
+                                        break
+                                    print(f"Default must be between {min_val} and {max_val}")
+                                settings.append({
+                                    "label": ui_label,
+                                    "type": "slider",
+                                    "min": min_val,
+                                    "max": max_val,
+                                    "default": default,
+                                    "integer": annotation == 'int'
+                                })
+                            elif annotation == 'str':
+                                print("Type: String selection")
+                                while True:
+                                    options_str = input(f"Enter comma-separated options for {ui_label}: ").strip()
+                                    if not options_str:
+                                        print("Error: Must provide at least one option")
+                                        continue
+                                    options = [opt.strip() for opt in options_str.split(',')]
+                                    options = [opt for opt in options if opt]
+                                    if not options:
+                                        print("Error: No valid options provided")
+                                        continue
+                                    if len(set(options)) != len(options):
+                                        print("Error: Duplicate options found")
+                                        continue
+                                    break
+                                print("\nAvailable options:")
+                                for idx, opt in enumerate(options, 1):
+                                    print(f"{idx}. {opt}")
+                                while True:
+                                    default_str = input(f"Enter default option (1-{len(options)}): ").strip()
+                                    try:
+                                        default_idx = int(default_str) - 1
+                                        if 0 <= default_idx < len(options):
+                                            break
+                                        print(f"Please enter a number between 1 and {len(options)}")
+                                    except ValueError:
+                                        print("Please enter a valid number")
+                            i += 1
+                        update_json_config(ui_name, settings, func_info['num_inputs'])
+                        update_renderhook_maps(func_name, ui_name, param_mappings)
+                        print(f"\nFunction '{func_name}' configured successfully.")
+                    except Exception as e:
+                        print(f"Error configuring '{func_name}': {e}")
+                        passes_path = str(Path(__file__).parent / "passes.py")
+                        func_info = extract_function_info(passes_path, func_name)
+                        if not func_info:
+                            print(f"Skipping unsupported or invalid function '{func_name}'.")
+                            continue
+                        ui_name = input(f"Enter UI name for '{func_name}' (or press Enter to use function name, or type 'skip' to skip): ").strip()
+                        if ui_name.lower() == 'skip':
+                            print(f"Skipping function '{func_name}'.")
+                            continue
+                        if ui_name.lower() == 'disable':
+                            passes_path_obj = Path(__file__).parent / "passes.py"
+                            with open(passes_path_obj, "r", encoding="utf-8") as f:
+                                lines = f.readlines()
+                            for idx, line in enumerate(lines):
+                                if line.strip().startswith(f"def {func_name}(") and "#globalignore" not in line:
+                                    lines[idx] = line.rstrip() + " #globalignore\n"
+                                    break
+                            with open(passes_path_obj, "w", encoding="utf-8") as f:
+                                f.writelines(lines)
+                            print(f"Function '{func_name}' disabled with #globalignore.")
+                            continue
+                        param_mappings = {}
+                        param_labels = []
+                        j = 0
+                        params_len = len(func_info['params'])
+                        while j < params_len:
+                            param = func_info['params'][j]
+                            ui_label = input(f"UI label for parameter '{param['name']}' (or press Enter to use same name): ").strip()
+                            if ui_label.lower() == 'edit' and j > 0:
+                                j -= 1
+                                continue
+                            if ui_label and ui_label != param['name']:
+                                param_mappings[ui_label] = param['name']
+                                param_labels.append(ui_label)
+                            else:
+                                param_labels.append(param['name'])
+                            j += 1
+                        settings = []
+                        i = 0
+                        params = func_info['params']
+                        while i < len(params):
+                            param = params[i]
+                            ui_label = param_labels[i] if i < len(param_labels) else param['name']
+                            annotation = param['annotation']
+                            if (
+                                i + 1 < len(params)
+                                and annotation in ['int', 'float']
+                                and params[i + 1]['annotation'] == annotation
+                                and 'min' in param['name'].lower()
+                                and 'max' in params[i + 1]['name'].lower()
+                            ):
+                                print(f"\nDetected consecutive '{annotation}' parameters: '{param['name']}' and '{params[i+1]['name']}'")
+                                use_multislider = input("Would you like to use a multislider for these? (y/n): ").strip().lower()
+                                if use_multislider == 'edit' and i > 0:
+                                    i -= 1
+                                    continue
+                                if use_multislider == 'y':
+                                    min_label = param_labels[i] if i < len(param_labels) else param['name']
+                                    max_label = param_labels[i+1] if i+1 < len(param_labels) else params[i+1]['name']
+                                    min_val = validate_numeric_input(input(f"Enter minimum value for {min_label}: "), min_label, is_min=True)
+                                    if str(min_val).lower() == 'edit' and i > 0:
+                                        i -= 1
+                                        continue
+                                    max_val = validate_numeric_input(input(f"Enter maximum value for {max_label}: "), max_label)
+                                    if str(max_val).lower() == 'edit' and i > 0:
+                                        i -= 1
+                                        continue
+                                    while max_val is not None and min_val is not None and max_val <= min_val:
+                                        print(f"Maximum value must be greater than minimum ({min_val})")
+                                        max_val = validate_numeric_input(input(f"Enter maximum value for {max_label}: "), max_label)
+                                        if str(max_val).lower() == 'edit' and i > 0:
+                                            i -= 1
+                                            continue
+                                    default_min = validate_numeric_input(input(f"Enter default min value: "), min_label)
+                                    if str(default_min).lower() == 'edit' and i > 0:
+                                        i -= 1
+                                        continue
+                                    default_max = validate_numeric_input(input(f"Enter default max value: "), max_label)
+                                    if str(default_max).lower() == 'edit' and i > 0:
+                                        i -= 1
+                                        continue
+                                    while (default_min is not None and default_max is not None) and (default_min < min_val or default_max > max_val or default_min > default_max):
+                                        print(f"Defaults must be within [{min_val}, {max_val}] and min <= max")
+                                        default_min = validate_numeric_input(input(f"Enter default min value: "), min_label)
+                                        if str(default_min).lower() == 'edit' and i > 0:
+                                            i -= 1
+                                            continue
+                                        default_max = validate_numeric_input(input(f"Enter default max value: "), max_label)
+                                        if str(default_max).lower() == 'edit' and i > 0:
+                                            i -= 1
+                                            continue
+                                    settings.append({
+                                        "label": f"{min_label} / {max_label}",
+                                        "type": "multislider",
+                                        "min": min_val,
+                                        "max": max_val,
+                                        "default": [default_min, default_max],
+                                        "integer": annotation == 'int'
+                                    })
+                                    i += 2
+                                    continue
+                            print(f"\nConfiguring parameter: {ui_label}")
+                            if annotation == 'bool':
+                                print("Type: Boolean switch")
+                                default_str = input("Enable by default? (y/n): ").strip().lower()
+                                if default_str not in ['y', 'n']:
+                                    print("Invalid input. Using default value: false")
+                                    default_str = 'n'
+                                settings.append({
+                                    "label": ui_label,
+                                    "type": "switch",
+                                    "default": default_str == 'y'
+                                })
+                            elif annotation in ['int', 'float']:
+                                print(f"Type: {'Integer' if annotation == 'int' else 'Float'} slider")
+                                while True:
+                                    min_val = validate_numeric_input(
+                                        input(f"Enter minimum value for {ui_label}: "),
+                                        ui_label,
+                                        is_min=True
+                                    )
+                                    if min_val is not None:
+                                        break
+                                while True:
+                                    max_val = validate_numeric_input(
+                                        input(f"Enter maximum value for {ui_label}: "),
+                                        ui_label
+                                    )
+                                    if max_val is not None and max_val > min_val:
+                                        break
+                                    print(f"Maximum value must be greater than minimum ({min_val})")
+                                while True:
+                                    default = validate_numeric_input(
+                                        input(f"Enter default value for {ui_label}: "),
+                                        ui_label
+                                    )
+                                    if default is not None and min_val <= default <= max_val:
+                                        break
+                                    print(f"Default must be between {min_val} and {max_val}")
+                                settings.append({
+                                    "label": ui_label,
+                                    "type": "slider",
+                                    "min": min_val,
+                                    "max": max_val,
+                                    "default": default,
+                                    "integer": annotation == 'int'
+                                })
+                            elif annotation == 'str':
+                                print("Type: String selection")
+                                while True:
+                                    options_str = input(f"Enter comma-separated options for {ui_label}: ").strip()
+                                    if not options_str:
+                                        print("Error: Must provide at least one option")
+                                        continue
+                                    options = [opt.strip() for opt in options_str.split(',')]
+                                    options = [opt for opt in options if opt]
+                                    if not options:
+                                        print("Error: No valid options provided")
+                                        continue
+                                    if len(set(options)) != len(options):
+                                        print("Error: Duplicate options found")
+                                        continue
+                                    break
+                                print("\nAvailable options:")
+                                for idx, opt in enumerate(options, 1):
+                                    print(f"{idx}. {opt}")
+                                while True:
+                                    default_str = input(f"Enter default option (1-{len(options)}): ").strip()
+                                    try:
+                                        default_idx = int(default_str) - 1
+                                        if 0 <= default_idx < len(options):
+                                            break
+                                        print(f"Please enter a number between 1 and {len(options)}")
+                                    except ValueError:
+                                        print("Please enter a valid number")
+                            i += 1
+            if choice == "1":
+                missing = get_unimplemented_functions()
+                if not missing:
+                    print("No missing functions to configure.")
+                    continue
+                for func_name in missing:
+                    print(f"\nConfiguring function: {func_name}")
+                    try:
                         passes_path = str(Path(__file__).parent / "passes.py")
                         func_info = extract_function_info(passes_path, func_name)
                         if not func_info:
@@ -988,7 +1367,7 @@ def interactive_menu():
             elif choice == "2":
                 while True:
                     func_name = input("Enter the name of the function to configure (or 'back' to return): ").strip()
-                    if func_name.lower() == 'back':
+                    if func_name.lower() in ['back','exit','quit','escape','esc']:
                         break
                     passes_path = str(Path(__file__).parent / "passes.py")
                     func_info = extract_function_info(passes_path, func_name)
@@ -1142,7 +1521,8 @@ def interactive_menu():
                     print(f"\nFunction '{func_name}' configured successfully.")
             elif choice == "3":
                 print("Exiting.")
-                break
+                import sys
+                sys.exit(0)
             elif choice == "4":
                 show_quick_tutorial()
             else:

@@ -1,9 +1,9 @@
 {
-  "Generate Mask (Contrast)": [
+  "Generate Mask [Contrast]": [
     {
-      "kategory": "generate_mask_(contrast)",
+      "kategory": "generate_mask_[contrast]",
       "num_inputs": 1,
-      "original_func_name": "generate_contrast_mask"
+      "original_func_name": null
     },
     {
       "label": "min / max",
@@ -15,54 +15,13 @@
         120.0
       ],
       "integer": true
-    },
-    {
-      "original_func_name": "generate_contrast_mask"
-    }
-  ],
-  "Generate Mask (Luminance)": [
-    {
-      "kategory": "generate_mask_(luminance)",
-      "num_inputs": 1,
-      "original_func_name": "luminance_mask"
-    },
-    {
-      "label": "Mask (optional)",
-      "type": "image_input",
-      "optional": true,
-      "default": null
-    },
-    {
-      "original_func_name": "luminance_mask"
     }
   ],
   "PixelSort": [
     {
       "kategory": "pixelsort",
       "num_inputs": 1,
-      "original_func_name": "wrap_sort"
-    },
-    {
-      "label": "Sort Mode",
-      "type": "dropdown",
-      "options": [
-        "Luminance",
-        "HUE",
-        "RGB"
-      ],
-      "default": "Luminance"
-    },
-    {
-      "label": "Sort Mode",
-      "type": "dropdown",
-      "options": [
-        "Luminance",
-        "HUE",
-        "R",
-        "G",
-        "B"
-      ],
-      "default": "Luminance"
+      "original_func_name": null
     },
     {
       "label": "vSplitting",
@@ -78,189 +37,6 @@
       "label": "flipVert",
       "type": "switch",
       "default": false
-    },
-    {
-      "label": "rotate",
-      "type": "dropdown",
-      "options": [
-        "-90",
-        "0",
-        "90",
-        "-180"
-      ],
-      "default": "-90"
-    },
-    {
-      "original_func_name": "wrap_sort"
-    }
-  ],
-  "Subtract": [
-    {
-      "kategory": "subtract",
-      "num_inputs": 2,
-      "original_func_name": "subtract_images"
-    },
-    {
-      "original_func_name": "subtract_images"
-    }
-  ],
-  "GrowCrystalls": [
-    {
-      "kategory": "growcrystalls",
-      "num_inputs": 1,
-      "original_func_name": "cristalline_expansion"
-    },
-    {
-      "label": "SeedCount",
-      "type": "slider",
-      "min": 0.0,
-      "max": 100.0,
-      "default": 15.0,
-      "integer": true
-    },
-    {
-      "original_func_name": "cristalline_expansion"
-    }
-  ],
-  "Mix (%)": [
-    {
-      "kategory": "mix_(%)",
-      "num_inputs": 2,
-      "original_func_name": "mix_percent"
-    },
-    {
-      "label": "percentage",
-      "type": "slider",
-      "min": 0.0,
-      "max": 100.0,
-      "default": 50.0,
-      "integer": true
-    },
-    {
-      "original_func_name": "mix_percent"
-    }
-  ],
-  "Blur": [
-    {
-      "kategory": "blur",
-      "num_inputs": 1,
-      "original_func_name": "blur"
-    },
-    {
-      "label": "Mode",
-      "type": "dropdown",
-      "options": [
-        "Box",
-        "Gaussian"
-      ],
-      "default": "Box"
-    },
-    {
-      "label": "Kernel",
-      "type": "slider",
-      "min": 2.0,
-      "max": 128.0,
-      "default": 16.0,
-      "integer": true
-    },
-    {
-      "original_func_name": "blur"
-    }
-  ],
-  "Invert": [
-    {
-      "kategory": "invert",
-      "num_inputs": 1,
-      "original_func_name": "invert"
-    },
-    {
-      "label": "Type",
-      "type": "dropdown",
-      "options": [
-        "Luminance",
-        "HUE",
-        "R",
-        "G",
-        "B"
-      ],
-      "default": "Luminance"
-    },
-    {
-      "label": "Impact",
-      "type": "slider",
-      "min": 0.0,
-      "max": 100.0,
-      "default": 50.0,
-      "integer": false
-    },
-    {
-      "original_func_name": "invert"
-    }
-  ],
-  "AlphaOver": [
-    {
-      "kategory": "alphaover",
-      "num_inputs": 2,
-      "original_func_name": "alpha_over"
-    },
-    {
-      "original_func_name": "alpha_over"
-    }
-  ],
-  "Difference": [
-    {
-      "kategory": "difference",
-      "num_inputs": 2,
-      "original_func_name": "difference"
-    },
-    {
-      "original_func_name": "difference"
-    }
-  ],
-  "Add (Clamp)": [
-    {
-      "kategory": "add_(clamp)",
-      "num_inputs": 2,
-      "original_func_name": "maxAdd"
-    },
-    {
-      "original_func_name": "maxAdd"
-    }
-  ],
-  "Multiply": [
-    {
-      "kategory": "multiply",
-      "num_inputs": 1,
-      "original_func_name": null
-    },
-    {
-      "label": "Factor",
-      "type": "slider",
-      "min": 0.0,
-      "max": 20.0,
-      "default": 2.0,
-      "integer": false
-    },
-    {
-      "label": "allowValueOverflow",
-      "type": "switch",
-      "default": false
-    }
-  ],
-  "Lerp": [
-    {
-      "kategory": "lerp",
-      "num_inputs": 2,
-      "original_func_name": "lerp"
-    },
-    {
-      "label": "Mask (optional)",
-      "type": "image_input",
-      "optional": true,
-      "default": null
-    },
-    {
-      "original_func_name": "lerp"
     }
   ],
   "Kuwahara": [
@@ -270,23 +46,20 @@
       "original_func_name": null
     },
     {
-      "label": "Kernel Size",
-      "alias": "kernel_size",
+      "label": "Kernel",
       "type": "slider",
       "min": 2.0,
-      "max": 128.0,
+      "max": 256.0,
       "default": 16.0,
       "integer": true
     },
     {
-      "label": "Anisotropic",
-      "alias": "is_anisotropic",
+      "label": "isAnisotropic",
       "type": "switch",
-      "default": true
+      "default": false
     },
     {
-      "label": "Regions",
-      "alias": "regions",
+      "label": "regions",
       "type": "slider",
       "min": 3.0,
       "max": 24.0,
@@ -294,10 +67,9 @@
       "integer": true
     },
     {
-      "label": "Preserve Edge",
-      "alias": "preserve_edge",
+      "label": "preserveEdge",
       "type": "switch",
-      "default": true
+      "default": false
     }
   ]
 }

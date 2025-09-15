@@ -40,6 +40,61 @@ def my_effect(img: Image.Image, intensity: float) -> Image.Image:
     return out
 ```
 
+## Render Pass Settings JSON Format (UI Mapping)
+
+The UI expects each render pass configuration in `renderPasses.json` to follow this format:
+
+### Structure
+- Each entry is a dictionary with keys:
+   - `label`: Display name for the UI element
+   - `alias`: Unique key for value mapping and dependencies (if omitted, `label` is used)
+   - `type`: Widget type (`switch`, `slider`, `multislider`, `dualslider`, `dropdown`, `radio`, `image_input`)
+   - `default`: Initial value (type-specific)
+   - `options`: List of options (for `dropdown`/`radio`)
+   - `min`, `max`, `integer`: For sliders
+   - `requires`: Dict mapping other control aliases/labels to required values (for dependencies)
+
+### Example Entries
+
+```json
+{
+   "label": "Enable Feature",
+   "alias": "enable_feature",
+   "type": "switch",
+   "default": true,
+   "requires": {
+      "other_switch": true
+   }
+}
+
+{
+   "label": "Strength",
+   "alias": "strength",
+   "type": "slider",
+   "min": 0,
+   "max": 100,
+   "default": 50,
+   "integer": true
+}
+
+{
+   "label": "Mode",
+   "alias": "mode",
+   "type": "dropdown",
+   "options": ["A", "B", "C"],
+   "default": "A"
+}
+```
+
+### Notes
+- Each setting must have a unique `alias` or `label`.
+- The type must match a supported widget.
+- Dependencies (`requires`) should use aliases/labels of other controls.
+- Default values must match the expected type for the widget.
+- Options are required for dropdown/radio.
+- Sliders need min/max/default/integer.
+- The UI uses these keys to create, update, and link controls.
+
 ### 2. Use the Settings Generator Tool
 
 After creating your function in `passes.py`, use the settings generator tool to automatically configure it:
