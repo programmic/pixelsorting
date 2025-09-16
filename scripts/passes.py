@@ -720,7 +720,13 @@ def __process_rows(y_start, y_end, padded_gray, padded_img, kernel, height, widt
     return result
 
 
-def kuwahara_wrapper(img: Image.Image, kernel: int, isAnisotropic: bool, regions: int = 8, stylePapari: bool = False) -> Image.Image:
+def kuwahara_wrapper(
+        img: Image.Image,
+        kernel: int,
+        regions: int = 8,
+        isAnisotropic: bool = False,
+        stylePapari: bool = False
+        ) -> Image.Image:
     if isAnisotropic:
         if stylePapari:
             return anisotropic_kuwahara_papari_gpu(img, kernel, regions)

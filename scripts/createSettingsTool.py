@@ -120,15 +120,34 @@ def update_json_config(ui_name: str, settings: List[Dict[str, Any]], num_inputs:
         print(f"Removing existing pass '{ui_name}' to replace with new configuration...")
         del config[ui_name]
 
-    # Add category, number of inputs, and original function name as first setting
-    category = ui_name.lower().replace(" ", "_")
-    settings.insert(0, {
-        "kategory": category,
+    # New format: top-level dict for each pass
+    # Prompt for function alias if not provided
+    func_alias = ui_name.lower().replace(" ", "_")
+    original_func_name = settings[-1].get("original_func_name") if "original_func_name" in settings[-1] else ui_name
+    pass_dict = {
+        "original_func_name": original_func_name,
         "num_inputs": num_inputs,
-        "original_func_name": settings[-1].get("original_func_name") if "original_func_name" in settings[-1] else None
-    })
+        "function_alias": func_alias,
+        "settings": []
+    }
+    # Each subsetting: name, unique alias, requirements
+    for s in settings:
+        subsetting = {
+            "name": s.get("label"),
+            "alias": s.get("alias", s.get("label")),
+            "type": s.get("type"),
+            "default": s.get("default")
+        }
+        # Add slider/range options
+        for key in ["min", "max", "integer", "options"]:
+            if key in s:
+                subsetting[key] = s[key]
+        # Add requirements (can be bool or logic string)
+        if "requires" in s:
+            subsetting["requirements"] = s["requires"]
+        pass_dict["settings"].append(subsetting)
 
-    config[ui_name] = settings
+    config[ui_name] = pass_dict
 
     with open(json_path, 'w') as f:
         json.dump(config, f, indent=2)
@@ -354,22 +373,22 @@ def create_setting(param):
 
     if widget_type == 'switch':
         default = input(f"Default value for {ui_label} (y/n, default n): ").strip().lower() == 'y'
-        requires = {}
-        add_dep = input(f"Do you want to link this switch to another switch? (y/n): ").strip().lower() == 'y'
+        requirements = {}
+        add_dep = input(f"Do you want to add requirements for this switch? (y/n): ").strip().lower() == 'y'
         while add_dep:
-            dep_label = input("  Enter label or alias of the switch to link to: ").strip()
-            dep_val = input("  Required value for that switch (y/n): ").strip().lower() == 'y'
-            if dep_label:
-                requires[dep_label] = dep_val
-            add_dep = input("  Link to another switch? (y/n): ").strip().lower() == 'y'
+            dep_label = input("  Enter label or alias of the control to require: ").strip()
+            logic = input("  Requirement logic (e.g. true, false, kernel>15): ").strip()
+            if dep_label and logic:
+                requirements[dep_label] = logic
+            add_dep = input("  Add another requirement? (y/n): ").strip().lower() == 'y'
         setting = {
             "label": ui_label,
             "alias": alias,
             "type": "switch",
             "default": default
         }
-        if requires:
-            setting["requires"] = requires
+        if requirements:
+            setting["requires"] = requirements
         return setting
     elif widget_type in ['slider', 'multislider']:
         min_val = float(input(f"Min value for {ui_label}: "))
@@ -952,11 +971,23 @@ def interactive_menu():
                                 if default_str not in ['y', 'n']:
                                     print("Invalid input. Using default value: false")
                                     default_str = 'n'
-                                settings.append({
+                                # Prompt for switch dependencies
+                                requires = {}
+                                add_dep = input(f"Do you want to link this switch to another switch? (y/n): ").strip().lower() == 'y'
+                                while add_dep:
+                                    dep_label = input("  Enter label or alias of the switch to link to: ").strip()
+                                    dep_val = input("  Required value for that switch (y/n): ").strip().lower() == 'y'
+                                    if dep_label:
+                                        requires[dep_label] = dep_val
+                                    add_dep = input("  Link to another switch? (y/n): ").strip().lower() == 'y'
+                                setting = {
                                     "label": ui_label,
                                     "type": "switch",
                                     "default": default_str == 'y'
-                                })
+                                }
+                                if requires:
+                                    setting["requires"] = requires
+                                settings.append(setting)
                             elif annotation in ['int', 'float']:
                                 print(f"Type: {'Integer' if annotation == 'int' else 'Float'} slider")
                                 while True:
