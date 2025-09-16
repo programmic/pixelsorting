@@ -43,11 +43,20 @@ class ModernSlotButton(QPushButton):
         if parent:
             # Map event position to parent coordinates
             from PySide6.QtCore import QPoint
-            mapped_event = type(event)(event)
-            mapped_event.setDropAction(event.dropAction())
-            mapped_event.setMimeData(event.mimeData())
-            mapped_event.setPos(self.mapToParent(event.pos()))
-            parent.dropEvent(mapped_event)
+            # Construct a new QDropEvent mapped to the parent's coordinate space
+            from PySide6.QtGui import QDropEvent
+            from PySide6.QtCore import QPointF
+            mapped_pos = self.mapToParent(event.pos())
+            # QDropEvent requires a QPointF for position on some platforms
+            qposf = QPointF(mapped_pos.x(), mapped_pos.y())
+            new_event = QDropEvent(
+                qposf,
+                event.dropAction(),
+                event.mimeData(),
+                event.mouseButtons(),
+                event.keyboardModifiers()
+            )
+            parent.dropEvent(new_event)
         else:
             event.ignore()
     """A modern styled button for slot display with proper scaling and animations."""

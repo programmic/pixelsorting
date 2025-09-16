@@ -23,6 +23,26 @@ class RenderPassSettingsWidget(QWidget):
         self._used_labels = set()
         self.settings_config = settings_config
 
+        # Helper to resolve a requested key using alias or label fallback
+        def resolve_control_key(request_key: str):
+            # try direct match first
+            if request_key in self.controls:
+                return request_key
+            # try matching by alias in settings_config
+            for s in self.settings_config:
+                if s.get('alias') == request_key and s.get('alias') in self.controls:
+                    return s.get('alias')
+                if s.get('label') == request_key and s.get('alias') in self.controls:
+                    return s.get('alias')
+            # try matching by label
+            for s in self.settings_config:
+                lbl = s.get('label')
+                if lbl and lbl == request_key and lbl in self.controls:
+                    return lbl
+            return None
+
+        self._resolve_control_key = resolve_control_key
+
         switch_group = QWidget()
         switch_layout = QHBoxLayout()
         switch_layout.setContentsMargins(4, 4, 4, 4)
@@ -33,20 +53,36 @@ class RenderPassSettingsWidget(QWidget):
         filtered_settings = [s for s in settings_config if "kategory" not in s]
         default_values = {}
         for setting in filtered_settings:
-            key = setting.get("alias") or setting.get("label", "")
-            if key:
-                default_values[key] = setting.get("default")
+            # Use 'name' as the internal control key when available, otherwise fall back to alias/label
+            control_key = setting.get("name") or setting.get("alias") or setting.get("label") or ""
+            if control_key:
+                default_values[control_key] = setting.get("default")
 
         if saved_settings:
-            for key, default_val in default_values.items():
+            # saved_settings may use alias/label or name as keys; defer final application until controls exist
+            for key, default_val in list(default_values.items()):
+                # check common fallbacks in saved_settings
                 if key in saved_settings:
                     default_values[key] = saved_settings[key]
+                else:
+                    # check alias and label forms
+                    # find the matching setting entry
+                    for s in filtered_settings:
+                        alt_keys = [s.get('alias'), s.get('label'), s.get('name')]
+                        if any(k == key for k in alt_keys if k):
+                            for alt in alt_keys:
+                                if alt and alt in saved_settings:
+                                    default_values[key] = saved_settings[alt]
+                                    break
+                            break
 
         for idx, setting in enumerate(filtered_settings):
             # Only create controls for settings with a valid label
             label_text = setting.get("label")
             alias = setting.get("alias")
-            key = alias or label_text
+            # internal key used to store the control (prefer 'name' if provided)
+            control_key = setting.get('name') or alias or label_text
+            key = control_key
             if not label_text or not str(label_text).strip():
                 print(f"Skipping setting {idx} (no label): {setting}")
                 continue
@@ -83,7 +119,7 @@ class RenderPassSettingsWidget(QWidget):
                     combo.addItem(slot)
                 v_layout.addWidget(combo)
                 widget.setLayout(v_layout)
-                self.controls[key] = combo
+                self.controls[control_key] = combo
                 control = widget
                 self.layout.addWidget(control)
                 continue
@@ -109,7 +145,7 @@ class RenderPassSettingsWidget(QWidget):
                 hbox.addStretch()
                 widget.setLayout(hbox)
                 switch_layout.addWidget(widget)
-                self.controls[key] = toggle
+                self.controls[control_key] = toggle
                 switch_count += 1
                 # Add debug for toggling and dependency
                 def make_toggle_handler(label, setting):
@@ -119,19 +155,8 @@ class RenderPassSettingsWidget(QWidget):
                         if requires and isinstance(requires, dict):
                             for req_label, req_value in requires.items():
                                 # Try both alias and label for dependency lookup
-                                target = self.controls.get(req_label)
-                                if target is None:
-                                    # Try to find by label if alias not found, or vice versa
-                                    alt_key = None
-                                    for s in self.settings_config:
-                                        if s.get("alias") == req_label:
-                                            alt_key = s.get("label")
-                                            break
-                                        if s.get("label") == req_label:
-                                            alt_key = s.get("alias")
-                                            break
-                                    if alt_key:
-                                        target = self.controls.get(alt_key)
+                                resolved = self._resolve_control_key(req_label)
+                                target = self.controls.get(resolved) if resolved else None
                                 if target is None:
                                     print(f"[DEBUG] [DEPENDENCY] Target '{req_label}' not found for '{label}'")
                                     continue
@@ -250,13 +275,13 @@ class RenderPassSettingsWidget(QWidget):
                 v_layout.addWidget(slider_widget)
                 widget.setLayout(v_layout)
 
-                self.controls[key] = {'slider': slider, 'value_edit': value_edit, '_widget': widget}
+                self.controls[control_key] = {'slider': slider, 'value_edit': value_edit, '_widget': widget}
                 self.layout.addWidget(widget)
                 continue
                 widget.setLayout(v_layout)
                 self.layout.addWidget(widget)
                 # Store both slider and value_edit under the label for easy access
-                self.controls[key] = {'slider': slider, 'value_edit': value_edit}
+                self.controls[control_key] = {'slider': slider, 'value_edit': value_edit}
                 continue
             else:
                 # If we had switches and now getting another control type
@@ -271,7 +296,7 @@ class RenderPassSettingsWidget(QWidget):
             if t == "switch":
                 toggle = QToggleSwitch()
                 toggle.setObjectName(key)
-                self.controls[key] = toggle
+                self.controls[control_key] = toggle
                 self.layout.addWidget(toggle)
 
                 print(f"[DEBUG] Switch created: {label_text}")
@@ -287,9 +312,10 @@ class RenderPassSettingsWidget(QWidget):
                         requires = setting.get("requires")
                         if requires and isinstance(requires, dict):
                             for req_label, req_value in requires.items():
-                                target = self.controls.get(req_label)
+                                resolved = self._resolve_control_key(req_label)
+                                target = self.controls.get(resolved) if resolved else None
                                 if target is None:
-                                    print(f"[DEBUG] Target {req_label} not found")
+                                    print(f"[DEBUG] Target {req_label} not found (tried resolved={resolved})")
                                     continue
                                 if isinstance(target, QToggleSwitch):
                                     if target.isChecked() != bool(req_value):
@@ -341,7 +367,7 @@ class RenderPassSettingsWidget(QWidget):
                 v_layout.addWidget(label)
                 v_layout.addWidget(combo)
                 widget.setLayout(v_layout)
-                self.controls[key] = combo
+                self.controls[control_key] = combo
                 control = widget
 
             elif t in ["slider", "multislider", "dualslider"]:
@@ -461,7 +487,7 @@ class RenderPassSettingsWidget(QWidget):
                     slider_widget.setLayout(h_slider_layout)
                     v_layout.addWidget(slider_widget)
                     
-                    self.controls[key] = slider
+                    self.controls[control_key] = slider
                     
                 elif t == "multislider":
                     # Use QRangeSlider for multi-handle support
@@ -545,7 +571,7 @@ class RenderPassSettingsWidget(QWidget):
                     slider_widget.setLayout(h_slider_layout)
                     v_layout.addWidget(slider_widget)
                     
-                    self.controls[label_text] = slider
+                    self.controls[control_key] = slider
                 else:
                     # Determine if this is an integer or float slider
                     is_integer = setting.get("integer", False)
@@ -649,7 +675,7 @@ class RenderPassSettingsWidget(QWidget):
                     slider_widget.setLayout(h_slider_layout)
                     v_layout.addWidget(slider_widget)
                     
-                    self.controls[label_text] = slider
+                    self.controls[control_key] = slider
                 
                 control = widget
                 control.setLayout(v_layout)

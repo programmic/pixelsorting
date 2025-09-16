@@ -4,6 +4,7 @@ from typing import Optional, Callable
 from PySide6.QtWidgets import *
 from PySide6.QtCore import Qt
 from .renderPassSettingsWidget import *
+from .maskWidget import MaskWidget
 
 import json
 import os
@@ -41,6 +42,10 @@ class RenderPassWidget(QWidget):
         settings_config = self.get_settings_config(renderpass_type)
         category_settings = next((s for s in settings_config if "kategory" in s), None)
         self.numInputs = category_settings.get("num_inputs", 1) if category_settings else 1
+        # Known dual-input pass types (legacy behavior)
+        dual_input_types = ["Mix Percent", "Mix Screen", "Subtract Images", "Alpha Over", "Scale to fit"]
+        if renderpass_type in dual_input_types:
+            self.numInputs = 2
         self.selectedInputs = [None] * self.numInputs
         self.selectedOutput = None
         self.savedSettings = saved_settings or {}
@@ -90,10 +95,14 @@ class RenderPassWidget(QWidget):
         """)
         self.maskLabel.mousePressEvent = self._on_mask_click
         self.maskLayout.addWidget(self.maskLabel)
+        # Create the MaskWidget and keep it in sync with the label
+        self.maskWidget = MaskWidget(self.availableSlots, self.start_slot_selection)
+        self.maskLayout.addWidget(self.maskWidget)
         self.maskLayout.addStretch()
-        self.selectedMask = None
         self.maskLayout.setContentsMargins(4, 0, 4, 4)
         self.maskLayout.setSpacing(2)
+        # keep a legacy selectedMask value for fallback compatibility
+        self.selectedMask = None
 
         # --- IO Layout (inputs/outputs) ---
         self.ioLayout = QHBoxLayout()
@@ -101,7 +110,8 @@ class RenderPassWidget(QWidget):
         for i in range(self.numInputs):
             label = QLabel(f"Input {i+1}: <none>")
             label.setStyleSheet("background-color: #f8f9fa; color: #333; padding: 4px; border-radius: 4px; min-width: 90px; font-weight: 600;")
-            label.mousePressEvent = lambda event, idx=i: self._on_input_click(idx)
+            # bind input click to handler
+            label.mousePressEvent = (lambda idx: (lambda event: self._on_input_click(event, idx)))(i)
             self.ioLayout.addWidget(label)
             self.inputLabels.append(label)
         self.outputLabel = QLabel("Output: <none>")
@@ -145,10 +155,33 @@ class RenderPassWidget(QWidget):
         self.outputLabel.setStyleSheet("background-color: #f8f9fa; color: #333; padding: 4px; border-radius: 4px; min-width: 90px; font-weight: 600;")
         self.onSelectSlot('mask', self)
 
+    def _on_input_click(self, event, idx: int):
+        """Handle clicks on input labels to start input slot selection."""
+        self.selectionMode = 'input'
+        self.currentSelectedInput = idx
+        # reset input label styles and highlight the selected one
+        for i, label in enumerate(self.inputLabels):
+            if i == idx:
+                label.setStyleSheet("background-color: #1976d2; color: #fff; font-weight: bold; padding: 4px; border-radius: 4px; min-width: 90px;")
+            else:
+                label.setStyleSheet("background-color: #f8f9fa; color: #333; padding: 4px; border-radius: 4px; min-width: 90px; font-weight: 600;")
+        # ensure output/mask styles are.reset
+        if hasattr(self, 'outputLabel'):
+            self.outputLabel.setStyleSheet("background-color: #f8f9fa; color: #333; padding: 4px; border-radius: 4px; min-width: 90px; font-weight: 600;")
+        if hasattr(self, 'maskLabel'):
+            self.maskLabel.setStyleSheet("background-color: #ededed; color: #888; padding: 2px 4px; border-radius: 4px; min-width: 70px; font-size: 11px;")
+        if self.onSelectSlot:
+            self.onSelectSlot('input', self)
+
     def set_slot(self, slot_name):
         old_output = self.selectedOutput
         if self.selectionMode == 'mask':
-            self.selectedMask = slot_name
+            # Delegate mask slot selection to the MaskWidget
+            try:
+                self.maskWidget.set_slot(slot_name)
+            except Exception:
+                # fallback: store locally
+                self.selectedMask = slot_name
             self.maskLabel.setText(f"Mask: {slot_name}")
         elif self.selectionMode == 'input' and self.currentSelectedInput is not None:
             self.selectedInputs[self.currentSelectedInput] = slot_name
@@ -175,7 +208,14 @@ class RenderPassWidget(QWidget):
         settings = self.settingsWidget.get_values()
         settings['inputs'] = self.selectedInputs
         settings['output'] = self.selectedOutput
-        settings['mask'] = self.selectedMask
+        # Prefer using the MaskWidget values if present
+        if hasattr(self, 'maskWidget') and self.maskWidget is not None:
+            try:
+                settings['mask'] = self.maskWidget.get_values()
+            except Exception:
+                settings['mask'] = self.selectedMask
+        else:
+            settings['mask'] = self.selectedMask
         return settings
 
     def load_settings(self, settings_dict):
@@ -196,8 +236,18 @@ class RenderPassWidget(QWidget):
             self.selectedOutput = settings_dict['output']
             self.outputLabel.setText(f"Output: {self.selectedOutput}")
         if 'mask' in settings_dict:
-            self.selectedMask = settings_dict['mask']
-            self.maskLabel.setText(f"Mask: {self.selectedMask}")
+            # Load mask settings into the MaskWidget (if present)
+            try:
+                self.maskWidget.load_settings(settings_dict['mask'])
+                # update label to reflect loaded slot
+                slot = self.maskWidget.selected_slot
+                if slot:
+                    self.maskLabel.setText(f"Mask: {slot}")
+            except Exception:
+                # fallback behavior for legacy saved data
+                self.selectedMask = settings_dict['mask']
+                if isinstance(self.selectedMask, dict) and 'slot' in self.selectedMask:
+                    self.maskLabel.setText(f"Mask: {self.selectedMask.get('slot')}")
         if 'settings' in settings_dict:
             settings_data = settings_dict['settings']
             if isinstance(settings_data, dict):
@@ -220,14 +270,47 @@ class RenderPassWidget(QWidget):
                     RenderPassWidget._settings_cache = {}
             except Exception as e:
                 print(f"An unexpected error occurred: {e}")
-        settings_list = RenderPassWidget._settings_cache.get(renderpass_type)
-        if settings_list and isinstance(settings_list, list):
-            return settings_list
-        else:
-            return [
-                {"kategory": "default", "num_inputs": 1},
-                {"label": "Enabled", "type": "switch", "default": True}
-            ]
+        settings_entry = RenderPassWidget._settings_cache.get(renderpass_type)
+        # New format: each top-level pass is a dict with keys like 'original_func_name', 'num_inputs', 'settings'
+        if isinstance(settings_entry, dict):
+            num_inputs = settings_entry.get('num_inputs', 1)
+            settings = settings_entry.get('settings', []) or []
+            # Filter out any sentinel/null-like entries that may have been saved
+            def is_valid_setting(s):
+                if not isinstance(s, dict):
+                    return False
+                # consider a setting invalid if all primary fields are None or missing
+                primary_keys = ('name', 'alias', 'type')
+                for k in primary_keys:
+                    if s.get(k) is not None:
+                        return True
+                return False
+
+            cleaned = [s for s in settings if is_valid_setting(s)]
+            # Normalize keys so GUI widget finds 'label' and 'alias'
+            for s in cleaned:
+                # prefer explicit label, fallback to name or alias
+                label = s.get('label') or s.get('alias') or s.get('name')
+                if label:
+                    s['label'] = label
+                # ensure alias exists (used as unique key for legacy data)
+                if not s.get('alias'):
+                    s['alias'] = s.get('name') or str(label) if label is not None else ''
+                # keep internal 'name' if provided so rendering/execution can use it
+                # accept both 'requirements' and 'requires' (normalize to 'requires')
+                if 'requirements' in s and 'requires' not in s:
+                    s['requires'] = s.pop('requirements')
+
+            # Prepend a category entry preserving legacy behavior
+            return [{"kategory": "default", "num_inputs": num_inputs}] + cleaned
+        # Legacy format: a list was previously stored directly
+        if settings_entry and isinstance(settings_entry, list):
+            return settings_entry
+        # Fallback default
+        return [
+            {"kategory": "default", "num_inputs": 1},
+            {"label": "Enabled", "type": "switch", "default": True}
+        ]
 
     def start_slot_selection(self, mode):
         self.selectionMode = mode

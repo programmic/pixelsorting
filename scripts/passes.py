@@ -727,6 +727,7 @@ def kuwahara_wrapper(
         isAnisotropic: bool = False,
         stylePapari: bool = False
         ) -> Image.Image:
+    print(f"Running Kuwahara Filter (Kernel: {kernel}, Regions: {regions}, Anisotropic: {isAnisotropic}, Papari Style: {stylePapari})")
     if isAnisotropic:
         if stylePapari:
             return anisotropic_kuwahara_papari_gpu(img, kernel, regions)
