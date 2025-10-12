@@ -1,0 +1,97 @@
+{
+    "func_name": "testFunction",
+    "display_name": "Test Function",
+    "category": null,
+    "settings": {
+        "param1": {
+            "name": "Parameter 1",
+            "type": "int",
+            "default": 10,
+            "min": 0,
+            "max": 100
+        },
+        "param2": {
+            "name": "Parameter 2",
+            "type": "select-enum",
+            "options": [
+                "value1",
+                "value2",
+                "value3"
+            ],
+            "default": "value2"
+        },
+        "param3": {
+            "name": "Parameter 3",
+            "type": "select-radio",
+            "options": [
+                "optionA",
+                "optionB",
+                "optionC"
+            ],
+            "default": "optionB"
+        },
+        "param4": {
+            "name": "Parameter 4",
+            "type": "bool",
+            "default": true
+        },
+        "param5": {
+            "name": "Parameter 5",
+            "type": "float",
+            "default": 0.5,
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.1
+        },
+        "param6": {
+            "name": "Paramter names can be set at will",
+            "type": "int-range",
+            "min": 0,
+            "max": 50,
+            "default": [
+                10,
+                30
+            ]
+        },
+        "param7": {
+            "name": "They are not generated",
+            "type": "float-range",
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.01,
+            "default": [
+                0.2,
+                0.8
+            ]
+        }
+    },
+    "requirements": {
+        "param6": {
+            "param1": {
+                "min": 20
+            }
+        },
+        "param4": {
+            "param3": {
+                "equals": "optionC"
+            }
+        }
+    },
+    "desc": [
+        "def testFunction(img: Image.Image, # Image is always the first parameter, and is not listed in the settings as it is required and handled separately.",
+        "# if a second image is added, it will also be handled separately and not listed in the settings.",
+        "# should there be a third image, or should any image be titled mask or be optional, it should be listed in the settings.",
+        "param1: int,",
+        "param2: Enum,",
+        "param3: Enum,",
+        "param4: bool,",
+        "param5: float,",
+        "param6: tuple[int, int],",
+        "param7: tuple[float, float]",
+        "):ram7: tuple[float, float",
+        "# not important",
+        "return None  ):",
+        "# not important",
+        "return None"
+    ]
+}

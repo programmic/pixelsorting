@@ -238,6 +238,20 @@ class GUI(QWidget):
         self.preview_worker.resultReady.connect(self.showPreviewImage)
         self.preview_worker.finished.connect(self.onPreviewGenerationFinished)
 
+    def get_sort_mode_enum(self):
+        """Return the currently selected sort mode as a SortMode enum."""
+        try:
+            from scripts.enums import SortMode
+        except Exception:
+            # Fallback import in case running as a script
+            import importlib.util, os
+            spec = importlib.util.spec_from_file_location("enums", os.path.join(os.path.dirname(__file__), "enums.py"))
+            enums = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(enums)
+            SortMode = enums.SortMode
+
+        return SortMode.from_value(self.sortMode.currentText())
+
         self.preview_thread.start()
 
     

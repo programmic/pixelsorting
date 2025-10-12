@@ -31,29 +31,25 @@ class RenderPassWidget(QWidget):
 
     def __init__(self, renderpass_type: str, availableSlots: list[str], onSelectSlot: Callable, onDelete: Callable, onUpdateSlotSource: Optional[Callable] = None, saved_settings: Optional[dict] = None):
         super().__init__()
-        self.collapsed = False  # Ensure this is set before anything else
+        self.collapsed = False
         self.renderpass_type = renderpass_type
         self.availableSlots = availableSlots
         self.onSelectSlot = onSelectSlot
-        self.onDelete = onDelete  # Store the delete callback
-        self.onUpdateSlotSource = onUpdateSlotSource  # Callback to update slot source information
+        self.onDelete = onDelete
+        self.onUpdateSlotSource = onUpdateSlotSource
+        self.savedSettings = saved_settings or {}
 
-        # Get settings configuration including input count
-        settings_config = self.get_settings_config(renderpass_type)
-        category_settings = next((s for s in settings_config if "kategory" in s), None)
+        # Load config from renderPasses.json
+        config = self.get_settings_config(renderpass_type)
+        category_settings = next((s for s in config if "kategory" in s), None)
         self.numInputs = category_settings.get("num_inputs", 1) if category_settings else 1
-        # Known dual-input pass types (legacy behavior)
-        dual_input_types = ["Mix Percent", "Mix Screen", "Subtract Images", "Alpha Over", "Scale to fit"]
-        if renderpass_type in dual_input_types:
-            self.numInputs = 2
         self.selectedInputs = [None] * self.numInputs
         self.selectedOutput = None
-        self.savedSettings = saved_settings or {}
 
         self.mainLayout = QVBoxLayout(self)
         self.mainLayout.setContentsMargins(4, 4, 4, 4)
 
-        # Create title bar with drag handle, collapse button, and delete button
+        # Title bar
         top = QHBoxLayout()
         top.setContentsMargins(4, 4, 4, 4)
         top.setSpacing(4)
@@ -61,13 +57,10 @@ class RenderPassWidget(QWidget):
         self.dragBar.setFixedWidth(20)
         self.dragBar.setAlignment(Qt.AlignCenter)
         top.addWidget(self.dragBar)
-
         self.title = QLabel(f"Renderpass: {renderpass_type}")
         self.title.setStyleSheet("font-weight: bold;")
         top.addWidget(self.title)
         top.addStretch()
-
-        # Collapse/expand button
         self.collapseBtn = QPushButton("−")
         self.collapseBtn.setFixedWidth(24)
         self.collapseBtn.setToolTip("Collapse/Expand")
@@ -75,42 +68,31 @@ class RenderPassWidget(QWidget):
         self.collapseBtn.setChecked(False)
         self.collapseBtn.clicked.connect(self.toggle_collapsed)
         top.addWidget(self.collapseBtn)
-
         self.deleteBtn = QPushButton("✖")
         self.deleteBtn.setFixedWidth(30)
         self.deleteBtn.clicked.connect(self._delete_self)
         top.addWidget(self.deleteBtn)
         self.mainLayout.addLayout(top)
 
-        # --- Mask Layout (separate, less prominent) ---
+        # Mask Layout
         self.maskLayout = QHBoxLayout()
         self.maskLabel = QLabel("Mask: <none>")
-        self.maskLabel.setStyleSheet("""
-            background-color: #ededed;
-            color: #888;
-            padding: 2px 4px;
-            border-radius: 4px;
-            min-width: 70px;
-            font-size: 11px;
-        """)
+        self.maskLabel.setStyleSheet("background-color: #ededed; color: #888; padding: 2px 4px; border-radius: 4px; min-width: 70px; font-size: 11px;")
         self.maskLabel.mousePressEvent = self._on_mask_click
         self.maskLayout.addWidget(self.maskLabel)
-        # Create the MaskWidget and keep it in sync with the label
         self.maskWidget = MaskWidget(self.availableSlots, self.start_slot_selection)
         self.maskLayout.addWidget(self.maskWidget)
         self.maskLayout.addStretch()
         self.maskLayout.setContentsMargins(4, 0, 4, 4)
         self.maskLayout.setSpacing(2)
-        # keep a legacy selectedMask value for fallback compatibility
         self.selectedMask = None
 
-        # --- IO Layout (inputs/outputs) ---
+        # IO Layout
         self.ioLayout = QHBoxLayout()
         self.inputLabels = []
         for i in range(self.numInputs):
             label = QLabel(f"Input {i+1}: <none>")
             label.setStyleSheet("background-color: #f8f9fa; color: #333; padding: 4px; border-radius: 4px; min-width: 90px; font-weight: 600;")
-            # bind input click to handler
             label.mousePressEvent = (lambda idx: (lambda event: self._on_input_click(event, idx)))(i)
             self.ioLayout.addWidget(label)
             self.inputLabels.append(label)
@@ -121,20 +103,17 @@ class RenderPassWidget(QWidget):
         self.ioLayout.setContentsMargins(4, 0, 4, 4)
         self.ioLayout.setSpacing(2)
 
-        # --- Collapsible content area ---
+        # Collapsible content area
         self.contentWidget = QWidget()
         self.contentLayout = QVBoxLayout(self.contentWidget)
         self.contentLayout.setContentsMargins(0, 0, 0, 0)
         self.contentLayout.setSpacing(0)
-        # Move IO and mask layouts into content area
         self.contentLayout.addLayout(self.ioLayout)
         self.contentLayout.addLayout(self.maskLayout)
 
-        settingsConfig = self.get_settings_config(self.renderpass_type)
-        saved_settings = {}
-        if self.savedSettings and 'settings' in self.savedSettings:
-            saved_settings = self.savedSettings['settings']
-        self.settingsWidget = RenderPassSettingsWidget(settingsConfig, saved_settings)
+        # Always use config for settingsWidget
+        saved_settings = self.savedSettings if self.savedSettings else {}
+        self.settingsWidget = RenderPassSettingsWidget(config, saved_settings)
         self.contentLayout.addWidget(self.settingsWidget)
 
         self.mainLayout.addWidget(self.contentWidget)
@@ -274,34 +253,33 @@ class RenderPassWidget(QWidget):
         # New format: each top-level pass is a dict with keys like 'original_func_name', 'num_inputs', 'settings'
         if isinstance(settings_entry, dict):
             num_inputs = settings_entry.get('num_inputs', 1)
-            settings = settings_entry.get('settings', []) or []
+            settings = settings_entry.get('settings', [])
+            # If settings is a dict, convert to list
+            if isinstance(settings, dict):
+                settings = list(settings.values())
             # Filter out any sentinel/null-like entries that may have been saved
             def is_valid_setting(s):
                 if not isinstance(s, dict):
+                    print(f"[DEBUG] Skipping non-dict setting: {s}")
                     return False
-                # consider a setting invalid if all primary fields are None or missing
-                primary_keys = ('name', 'alias', 'type')
+                primary_keys = ('name', 'type')
                 for k in primary_keys:
                     if s.get(k) is not None:
                         return True
+                print(f"[DEBUG] Skipping setting missing keys: {s}")
                 return False
-
             cleaned = [s for s in settings if is_valid_setting(s)]
+            if not cleaned:
+                print(f"[DEBUG] No valid settings found for {renderpass_type}. Settings: {settings}")
             # Normalize keys so GUI widget finds 'label' and 'alias'
             for s in cleaned:
-                # prefer explicit label, fallback to name or alias
                 label = s.get('label') or s.get('alias') or s.get('name')
                 if label:
                     s['label'] = label
-                # ensure alias exists (used as unique key for legacy data)
                 if not s.get('alias'):
                     s['alias'] = s.get('name') or str(label) if label is not None else ''
-                # keep internal 'name' if provided so rendering/execution can use it
-                # accept both 'requirements' and 'requires' (normalize to 'requires')
                 if 'requirements' in s and 'requires' not in s:
                     s['requires'] = s.pop('requirements')
-
-            # Prepend a category entry preserving legacy behavior
             return [{"kategory": "default", "num_inputs": num_inputs}] + cleaned
         # Legacy format: a list was previously stored directly
         if settings_entry and isinstance(settings_entry, list):

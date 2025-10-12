@@ -3,24 +3,30 @@
 import colorsys
 
 def convert(v, mode="lum") -> int:
-    match mode:
-        case "lum": return get_luminance(v)
-        case "hue": return get_hue(v)
-        case "r"  : return get_r(v)
-        case "g"  : return get_g(v)
-        case "b"  : return get_b(v)
-        case _:
-            print("ERROR: Unsupported sort mode:", mode)
-            raise
+    mode_str = str(mode).lower()
+    if mode_str == "lum":
+        return get_luminance(v)
+    elif mode_str == "hue":
+        return get_hue(v)
+    elif mode_str == "r":
+        return get_r(v)
+    elif mode_str == "g":
+        return get_g(v)
+    elif mode_str == "b":
+        return get_b(v)
+    else:
+        print("ERROR: Unsupported sort mode:", mode)
+        raise ValueError(f"Unsupported sort mode: {mode}")
 
 def get_luminance(v) -> int:
     # L = 0.2126 * R + 0.7152 * G + 0.0722 * B
     if len(v) == 3:
         r, g, b = v
+    elif len(v) == 4:
+        r, g, b, _ = v
     else:
-        print(f"\033[32m{v}\033[0;0m")
-        raise
-    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+        raise ValueError(f"Invalid input for luminance calculation: {v}. Expected a tuple of length 3 or 4 (RGB or RGBA).")
+    return int(0.2126 * r + 0.7152 * g + 0.0722 * b)
 
 def get_hue(v) -> int:
     r, g, b = [x / 255.0 for x in v]

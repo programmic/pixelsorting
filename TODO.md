@@ -1,7 +1,5 @@
 # UI Integrity & Improvement Checklist
 
-- [ ] **Drag-and-Drop Polish**
-
 - [ ] **Integration & Data Flow**
   - [ ] Ensure data flow between widgets is robust and error-tolerant
   - [ ] Add error handling for failed image imports and slot assignments

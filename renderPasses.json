@@ -1,46 +1,98 @@
 {
-  "Kuwahara": {
-    "original_func_name": "kuwahara_wrapper",
-    "num_inputs": 1,
-    "function_alias": "kuwahara",
-    "settings": [
-      {
+  "sharpen": {
+    "func_name": "sharpen",
+    "display_name": "Sharpen",
+    "category": "Enhance",
+    "settings": {
+      "strength": {
+        "name": "strength",
+        "label": "Strength",
+        "type": "float",
+        "min": 0.0,
+        "max": 5.0,
+        "default": 1.0
+      },
+      "kernel_size": {
+        "name": "kernel_size",
         "label": "Kernel",
-        "alias": "kernel",
-        "name": "kernel",
-        "type": "slider",
-        "default": 16,
-        "min": 2,
-        "max": 128,
-        "integer": true
+        "type": "int",
+        "min": 3.0,
+        "max": 16.0,
+        "default": 3.0
+      }
+    }
+  },
+  "wrap_sort": {
+    "func_name": "wrap_sort",
+    "display_name": "Sort",
+    "category": "Modify",
+    "settings": {
+      "mode": {
+        "name": "mode",
+        "label": "Mode",
+        "type": "enum",
+        "options": [
+          "lum",
+          "hue",
+          "r",
+          "g",
+          "b"
+        ],
+        "default": "lum",
+        "ui_type": "dropdown"
       },
-      {
-        "label": "Regions",
-        "alias": "regions",
-        "name": "regions",
-        "type": "slider",
-        "default": 12,
-        "min": 3,
-        "max": 24,
-        "integer": true
+      "vSplitting": {
+        "name": "vSplitting",
+        "label": "vSplitting",
+        "type": "bool",
+        "default": true
       },
-      {
-        "label": "isAnisotropic",
-        "alias": "isanisotropic",
-        "name": "isAnisotropic",
-        "type": "switch",
+      "flipHorz": {
+        "name": "flipHorz",
+        "label": "Flip Horizontal",
+        "type": "bool",
         "default": false
       },
-      {
-        "label": "stylePapari",
-        "alias": "preserveedge",
-        "name": "stylePapari",
-        "type": "switch",
-        "default": false,
-        "requires": {
-          "isAnisotropic": "true"
-        }
+      "flipVert": {
+        "name": "flipVert",
+        "label": "Flip Vertical",
+        "type": "bool",
+        "default": false
+      },
+      "rotate": {
+        "name": "rotate",
+        "label": "Rotate",
+        "type": "str",
+        "options": [
+          "-90",
+          "0",
+          "90",
+          "180"
+        ],
+        "default": "0",
+        "ui_type": "radio"
       }
-    ]
+    }
+  },
+  "multiply": {
+    "func_name": "multiply",
+    "display_name": "Multiply",
+    "category": "Modify",
+    "settings": {
+      "factor": {
+        "name": "factor",
+        "label": "Factor",
+        "type": "float",
+        "min": 0.0,
+        "max": 5.0,
+        "default": 1.0
+      },
+      "allowValueOverflow": {
+        "name": "allowValueOverflow",
+        "label": "Allow Value Overflow",
+        "type": "bool",
+        "default": false
+      }
+    }
   }
 }

@@ -241,7 +241,7 @@ def split_connected_chunks(v_chunks: list[list[tuple[int, int]]]) -> list[list[t
 
     return out
 
-def visualize_chunks(img: Image.Image, chunks: list[list[tuple[int, int]]], rotate: bool = False) -> Image.Image:
+def visualize_chunks(img: Image.Image, chunks: list[list[tuple[int, int]]], rotate: bool = False) -> Image.Image: #globalignore
     out = Image.new("RGB", img.size)
     for chunk in tqdm(chunks, desc="Visualizing chunks"):
         color = tuple(random.randint(0, 255) for _ in range(3))
@@ -251,7 +251,7 @@ def visualize_chunks(img: Image.Image, chunks: list[list[tuple[int, int]]], rota
     return out #globalignore
 
 def wrap_sort(img: Image.Image,
-              mode: str,
+              mode: 'str',
               vSplitting: bool,
               flipHorz: bool,
               flipVert: bool,
@@ -271,8 +271,6 @@ def wrap_sort(img: Image.Image,
     Returns:
         Processed PIL Image
     """
-    if mode.lower() not in ["lum", "hue", "r", "g", "b"]:
-        raise ValueError("PixelSortError: Unsupported sort mode")
     
     # Translate rotation string to boolean for sort function
     rotate_bool = rotate != "0"
@@ -284,9 +282,9 @@ def wrap_sort(img: Image.Image,
     mask = None
     
     # Call the actual sort function with translated parameters
-    return sort(img, mode=mode, flip_dir=flip_dir, rotate=rotate_bool, mask=mask)
+    return sort(img, mode, flip_dir=flip_dir, rotate=rotate_bool, mask=mask)
 
-def sort(img: Image.Image, 
+def sort(img: Image.Image,
          mode: str = "lum",
          flip_dir: bool = False,
          rotate: bool = True,
@@ -1311,7 +1309,10 @@ def lerp(img1: Image.Image, img2: Image.Image,  mask: Image.Image) -> Image.Imag
         for y in range(img1.size[1]):
             pixel1 = img1.getpixel((x, y))
             pixel2 = img2.getpixel((x, y))
-            mask_value = mask.getpixel((x, y))[0] / 255.0
+            # mask is converted to 'L' (grayscale) earlier, so getpixel returns
+            # an int. Use it directly to compute the interpolation weight.
+            mv = mask.getpixel((x, y))
+            mask_value = (mv[0] / 255.0) if isinstance(mv, tuple) else (mv / 255.0)
 
             new_r = int(pixel1[0] * (1 - mask_value) + pixel2[0] * mask_value)
             new_g = int(pixel1[1] * (1 - mask_value) + pixel2[1] * mask_value)
@@ -1320,3 +1321,20 @@ def lerp(img1: Image.Image, img2: Image.Image,  mask: Image.Image) -> Image.Imag
             img1.putpixel((x, y), (new_r, new_g, new_b))
 
     return img1
+
+def sharpen(img: Image.Image, strength: float, kernel_size: int) -> Image.Image:
+    if strength < 0:
+        raise ValueError("Strength must be non-negative")
+    if kernel_size < 1 or kernel_size % 2 == 0:
+        raise ValueError("Kernel size must be a positive odd integer")
+
+    # Ensure both images are RGB for shape consistency
+    img_rgb = img.convert('RGB')
+    blurred_rgb = blur_gaussian(img_rgb, kernel=kernel_size).convert('RGB')
+    img_np = np.array(img_rgb, dtype=np.float32)
+    blurred_np = np.array(blurred_rgb, dtype=np.float32)
+
+    sharpened_np = img_np + strength * (img_np - blurred_np)
+    sharpened_np = np.clip(sharpened_np, 0, 255).astype(np.uint8)
+
+    return Image.fromarray(sharpened_np, mode='RGB')

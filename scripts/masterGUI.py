@@ -199,7 +199,8 @@ class GUI(QWidget):
                 color: black;
             }
         """)
-        self.pass_display_names = list(self.render_passes_config.keys())
+        # Use display_name for available passes list
+        self.pass_display_names = [v.get('display_name', k) for k, v in self.render_passes_config.items()]
         self.passList.addItems(self.pass_display_names)
         self.passList.setFixedWidth(200)
         rightSideLayout.addWidget(self.passList)
@@ -208,12 +209,10 @@ class GUI(QWidget):
 
         self.passList.itemClicked.connect(self.on_pass_selected)
         self.slotTable.slot_clicked.connect(self.onSlotClicked)
-        
         # Connect context menu signals
         self.slotTable.context_menu.slot_learn_requested.connect(self.onSlotLearnRequested)
         self.slotTable.context_menu.slot_clear_requested.connect(self.onSlotClearRequested)
         self.slotTable.context_menu.slot_preview_requested.connect(self.onSlotPreviewRequested)
-        
         self.updateSlotUsage()
 
     def collapse_all_renderpasses(self):
@@ -397,13 +396,28 @@ class GUI(QWidget):
         self.updateSlotUsage()
 
     def on_pass_selected(self, item: QListWidgetItem):
-        renderpass_type = item.text()
+        display_label = item.text()
+        # Map display label back to internal name
+        internal_name = None
+        for k, v in self.render_passes_config.items():
+            if v.get('display_name', k) == display_label:
+                internal_name = k
+                break
+        if not internal_name:
+            self.show_message(f"No config found for {display_label}")
+            return
+        config = self.render_passes_config.get(internal_name, None)
+        if not config:
+            self.show_message(f"No config found for {display_label}")
+            return
+        # Pass settings to widget
         widget = RenderPassWidget(
-            renderpass_type,
+            internal_name,
             self.available_slots,
             self.startSlotSelection,
             self.removeRenderPass,
-            self.updateSlotSource
+            self.updateSlotSource,
+            saved_settings=config.get('settings', {})
         )
         lw = self.listWidget.list_widget
         listItem = QListWidgetItem()
@@ -664,17 +678,26 @@ class GUI(QWidget):
                     "slot_bindings": {}
                 }
 
-                # Save render pass configurations, including alias if present
+                # Save render pass configurations, using compact alias-to-param mapping
                 lw = self.listWidget.list_widget
                 for i in range(lw.count()):
                     widget = lw.itemWidget(lw.item(i))
                     if widget:
+                        renderpass_type = widget.renderpass_type
+                        config = self.render_passes_config.get(renderpass_type, {})
+                        alias_map = config.get('alias_to_param', {})
+                        settings = widget.get_settings()
+                        print(f"[DEBUG][SAVE] RenderPass: {renderpass_type}")
+                        print(f"[DEBUG][SAVE] Alias map: {alias_map}")
+                        print(f"[DEBUG][SAVE] Widget settings: {settings}")
+                        compact_settings = {alias: settings.get(alias_map.get(alias, alias)) for alias in alias_map}
+                        print(f"[DEBUG][SAVE] Compact settings: {compact_settings}")
                         pass_data = {
-                            "type": widget.renderpass_type,
-                            "settings": widget.get_settings(),
-                            "output_slot": widget.selectedOutput
+                            "type": renderpass_type,
+                            "settings": compact_settings,
+                            "output_slot": widget.selectedOutput,
+                            "alias_to_param": alias_map
                         }
-                        # Save alias if present (for backwards compatibility or user customization)
                         if hasattr(widget, 'alias') and widget.alias:
                             pass_data["alias"] = widget.alias
                         project_data["render_passes"].append(pass_data)
@@ -704,8 +727,22 @@ class GUI(QWidget):
                     if binding:
                         project_data['slot_bindings'][slot] = binding
 
+                def _normalize(obj):
+                    # Recursively convert Enum values to their primitive .value
+                    try:
+                        from enum import Enum
+                    except Exception:
+                        Enum = None
+                    if Enum is not None and isinstance(obj, Enum):
+                        return obj.value
+                    if isinstance(obj, dict):
+                        return {k: _normalize(v) for k, v in obj.items()}
+                    if isinstance(obj, list):
+                        return [_normalize(v) for v in obj]
+                    return obj
+
                 with open(file_path, 'w', encoding='utf-8') as f:
-                    json.dump(project_data, f, indent=2, ensure_ascii=False)
+                    json.dump(_normalize(project_data), f, indent=2, ensure_ascii=False)
 
                 QMessageBox.information(self, "Project Saved", f"Project saved successfully to:\n{file_path}")
 
@@ -750,8 +787,10 @@ class GUI(QWidget):
                 # Load render passes
                 for pass_data in project_data.get("render_passes", []):
                     renderpass_type = pass_data.get("type")
+                    print(f"[DEBUG][LOAD] RenderPass: {renderpass_type}")
+                    print(f"[DEBUG][LOAD] Pass data: {pass_data}")
                     if renderpass_type in self.render_passes_config:
-                        # Always load settings config from renderPasses.json and pass saved settings
+                        print(f"[DEBUG][LOAD] Found config for {renderpass_type}")
                         widget = RenderPassWidget(
                             renderpass_type,
                             self.available_slots,
@@ -760,10 +799,9 @@ class GUI(QWidget):
                             self.updateSlotSource,
                             saved_settings=pass_data if pass_data else None
                         )
-                        # Restore alias if present
                         if "alias" in pass_data:
                             setattr(widget, "alias", pass_data["alias"])
-                        # Add to list
+                        print(f"[DEBUG][LOAD] Created widget for {renderpass_type}")
                         listItem = QListWidgetItem()
                         listItem.setSizeHint(widget.sizeHint())
                         lw.addItem(listItem)

@@ -15,6 +15,8 @@ class RenderPassSettingsWidget(QWidget):
     :param parent: The parent widget.
     """
     def __init__(self, settings_config: list[dict], saved_settings: Optional[dict] = None, parent: Optional[QWidget] = None):
+        if switch_count > 0 and switch_group not in [self.layout.itemAt(i).widget() for i in range(self.layout.count()) if self.layout.itemAt(i).widget() is not None]:
+            self.layout.addWidget(switch_group)
         super().__init__(parent)
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(4, 4, 4, 4)
@@ -50,56 +52,225 @@ class RenderPassSettingsWidget(QWidget):
         switch_group.setLayout(switch_layout)
         switch_count = 0
 
-        filtered_settings = [s for s in settings_config if "kategory" not in s]
-        default_values = {}
-        for setting in filtered_settings:
-            # Use 'name' as the internal control key when available, otherwise fall back to alias/label
-            control_key = setting.get("name") or setting.get("alias") or setting.get("label") or ""
-            if control_key:
-                default_values[control_key] = setting.get("default")
-
-        if saved_settings:
-            # saved_settings may use alias/label or name as keys; defer final application until controls exist
-            for key, default_val in list(default_values.items()):
-                # check common fallbacks in saved_settings
-                if key in saved_settings:
-                    default_values[key] = saved_settings[key]
-                else:
-                    # check alias and label forms
-                    # find the matching setting entry
-                    for s in filtered_settings:
-                        alt_keys = [s.get('alias'), s.get('label'), s.get('name')]
-                        if any(k == key for k in alt_keys if k):
-                            for alt in alt_keys:
-                                if alt and alt in saved_settings:
-                                    default_values[key] = saved_settings[alt]
-                                    break
-                            break
-
+        # Only use settings from config, skip any legacy/extra logic
+        filtered_settings = [s for s in self.settings_config if "kategory" not in s]
         for idx, setting in enumerate(filtered_settings):
-            # Only create controls for settings with a valid label
-            label_text = setting.get("label")
-            alias = setting.get("alias")
-            # internal key used to store the control (prefer 'name' if provided)
-            control_key = setting.get('name') or alias or label_text
-            key = control_key
+            # Always use display label for UI, but use 'name' for internal mapping
+            label_text = setting.get("display_label") or setting.get("label")
+            control_key = setting.get('name')
             if not label_text or not str(label_text).strip():
-                print(f"Skipping setting {idx} (no label): {setting}")
                 continue
-            # Ensure uniqueness only for fallback labels (shouldn't be needed if config is correct)
-            if key in self._used_labels:
-                base_label = key
+            # Track used display labels for UI uniqueness only
+            if label_text in self._used_labels:
+                base_label = label_text
                 count = 1
-                while key in self._used_labels:
-                    key = f"{base_label}_{count}"
+                while label_text in self._used_labels:
+                    label_text = f"{base_label}_{count}"
                     count += 1
-            self._used_labels.add(key)
+            self._used_labels.add(label_text)
+            default_value = setting.get("default")
+            control = None
+            # --- Support for enum and str with options ---
+            t = setting.get("type")
+            if t in ("enum", "str") and setting.get("options"):
+                widget = QWidget()
+                v_layout = QVBoxLayout()
+                v_layout.setContentsMargins(0, 0, 0, 0)
+                label = QLabel(label_text)
+                label.setStyleSheet("color: #222; font-weight: bold; background: #f5f5f5; padding: 2px; border-radius: 3px;")
+                v_layout.addWidget(label)
+                options = setting.get("options", [])
+                ui_type = setting.get("ui_type", "dropdown")
+                if ui_type == "dropdown":
+                    combo = QComboBox()
+                    combo.setStyleSheet("background: #e0e0e0; color: #222; border-radius: 3px;")
+                    combo.addItems(options)
+                    if default_value is not None:
+                        idx = combo.findText(str(default_value))
+                        if idx >= 0:
+                            combo.setCurrentIndex(idx)
+                    v_layout.addWidget(combo)
+                    self.controls[control_key] = combo
+                elif ui_type == "radio":
+                    group = QButtonGroup(widget)
+                    radio_layout = QHBoxLayout()
+                    for opt in options:
+                        radio = QRadioButton(str(opt))
+                        radio_layout.addWidget(radio)
+                        group.addButton(radio)
+                        if str(opt) == str(default_value):
+                            radio.setChecked(True)
+                    v_layout.addLayout(radio_layout)
+                    self.controls[control_key] = group
+                widget.setLayout(v_layout)
+                self.layout.addWidget(widget)
+                continue
+    """
+    A widget for rendering pass settings.
+
+    :param settings_config: A list of settings configurations.
+    :param parent: The parent widget.
+    """
+    def __init__(self, settings_config: list[dict], saved_settings: Optional[dict] = None, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(4, 4, 4, 4)
+        self.layout.setSpacing(4)
+        self.controls = {}
+        self._used_labels = set()
+        self.settings_config = settings_config
+
+        # Helper to resolve a requested key using alias or label fallback
+        def resolve_control_key(request_key: str):
+            # try direct match first
+            if request_key in self.controls:
+                return request_key
+            # try matching by alias in settings_config
+            for s in self.settings_config:
+                if s.get('alias') == request_key and s.get('alias') in self.controls:
+                    return s.get('alias')
+                if s.get('label') == request_key and s.get('alias') in self.controls:
+                    return s.get('alias')
+            # try matching by label
+            for s in self.settings_config:
+                lbl = s.get('label')
+                if lbl and lbl == request_key and lbl in self.controls:
+                    return lbl
+            return None
+
+        self._resolve_control_key = resolve_control_key
+
+        switch_group = QWidget()
+        switch_layout = QHBoxLayout()
+        switch_layout.setContentsMargins(4, 4, 4, 4)
+        switch_layout.setSpacing(4)
+        switch_group.setLayout(switch_layout)
+        switch_count = 0
+
+        # Only use settings from config, skip any legacy/extra logic
+        filtered_settings = [s for s in self.settings_config if "kategory" not in s]
+        for idx, setting in enumerate(filtered_settings):
+            t = setting.get("type")
+            # --- Support for enum and str with options ---
+            if t in ("enum", "str") and setting.get("options"):
+                widget = QWidget()
+                v_layout = QVBoxLayout()
+                v_layout.setContentsMargins(0, 0, 0, 0)
+                label_text = setting.get("display_label") or setting.get("label")
+                label = QLabel(label_text)
+                label.setStyleSheet("color: #222; font-weight: bold; background: #f5f5f5; padding: 2px; border-radius: 3px;")
+                v_layout.addWidget(label)
+                options = setting.get("options", [])
+                default_value = setting.get("default")
+                ui_type = setting.get("ui_type", "dropdown")
+                if ui_type == "dropdown":
+                    combo = QComboBox()
+                    combo.setStyleSheet("background: #e0e0e0; color: #222; border-radius: 3px;")
+                    combo.addItems(options)
+                    if default_value is not None:
+                        idx = combo.findText(str(default_value))
+                        if idx >= 0:
+                            combo.setCurrentIndex(idx)
+                    v_layout.addWidget(combo)
+                    self.controls[setting.get('name')] = combo
+                elif ui_type == "radio":
+                    group = QButtonGroup(widget)
+                    radio_layout = QHBoxLayout()
+                    for opt in options:
+                        radio = QRadioButton(str(opt))
+                        radio_layout.addWidget(radio)
+                        group.addButton(radio)
+                        if str(opt) == str(default_value):
+                            radio.setChecked(True)
+                    v_layout.addLayout(radio_layout)
+                    self.controls[setting.get('name')] = group
+                widget.setLayout(v_layout)
+                self.layout.addWidget(widget)
+                continue
+            # Always use display label for UI, but use 'name' for internal mapping
+            label_text = setting.get("display_label") or setting.get("label")
+            control_key = setting.get('name')
+            if not label_text or not str(label_text).strip():
+                continue
+            # Track used display labels for UI uniqueness only
+            if label_text in self._used_labels:
+                base_label = label_text
+                count = 1
+                while label_text in self._used_labels:
+                    label_text = f"{base_label}_{count}"
+                    count += 1
+            self._used_labels.add(label_text)
             t = setting.get("type")
             default_value = setting.get("default")
             control = None
+            # Int/float support
+            if t in ("int", "float"):
+                # Subtle wrapper frame
+                frame = QFrame()
+                frame.setFrameShape(QFrame.StyledPanel)
+                frame.setStyleSheet("QFrame { background: #3a3a3a; border: 1px solid #1e1e1e; border-radius: 7px; margin-top: 6px; margin-bottom: 6px; }")
+                frame_layout = QVBoxLayout(frame)
+                frame_layout.setContentsMargins(8, 6, 8, 6)
+                # Value type for label
+                value_type = "(int)" if t == "int" else "(float)"
+                min_val = int(setting.get("min", 0)) if t == "int" else setting.get("min", 0)
+                max_val = int(setting.get("max", 100)) if t == "int" else setting.get("max", 100)
+                default_val = int(default_value) if t == "int" and default_value is not None else float(default_value) if default_value is not None else (min_val + max_val) / 2
+                # Center slider between min and max
+                slider_val = default_val if default_value is not None else (min_val + max_val) / 2
+                # Top row: label + current value
+                top_row = QHBoxLayout()
+                label = QLabel(f"{label_text} {value_type}")
+                label.setStyleSheet("color: #222; font-weight: bold; background: #f5f5f5; padding: 2px; border-radius: 3px;")
+                top_row.addWidget(label)
+                current_value_label = QLabel(f"{slider_val:.2f}" if t == "float" else str(slider_val))
+                current_value_label.setStyleSheet("color: #d95be6; font-weight: bold; padding-left: 8px;")
+                top_row.addStretch()
+                top_row.addWidget(current_value_label)
+                frame_layout.addLayout(top_row)
+                # Slider row: min | slider | max
+                slider_row = QHBoxLayout()
+                min_label = QLabel(str(min_val))
+                min_label.setStyleSheet("color: #888; font-size: 11px; padding-right: 4px;")
+                max_label = QLabel(str(max_val))
+                max_label.setStyleSheet("color: #888; font-size: 11px; padding-left: 4px;")
+                if t == "int":
+                    slider = QSlider(Qt.Horizontal)
+                    slider.setMinimum(int(min_val))
+                    slider.setMaximum(int(max_val))
+                    slider.setValue(int(slider_val))
+                else:
+                    slider = QDoubleSlider(Qt.Horizontal)
+                    slider.setMinimum(min_val)
+                    slider.setMaximum(max_val)
+                    slider.setValue(float(slider_val))
+                slider_row.addWidget(min_label)
+                slider_row.addWidget(slider)
+                slider_row.addWidget(max_label)
+                frame_layout.addLayout(slider_row)
+                frame.setLayout(frame_layout)
+                # Update current value label on slider change
+                def update_current_label(val, label=current_value_label, typ=t):
+                    label.setText(f"{val:.2f}" if typ == "float" else str(int(val)))
+                slider.valueChanged.connect(update_current_label)
+                self.controls[control_key] = slider
+                control = frame
+                self.layout.addWidget(frame)
 
             # --- Support for image_input (mask) using slot system ---
-            if t == "image_input":
+            try:
+                from scripts.enums import ControlType
+            except Exception:
+                import importlib.util, os
+                spec = importlib.util.spec_from_file_location("enums", os.path.join(os.path.dirname(__file__), "..", "enums.py"))
+                enums = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(enums)
+                ControlType = enums.ControlType
+            try:
+                ctype = ControlType.from_value(t)
+            except Exception:
+                ctype = None
+            if ctype == ControlType.IMAGE_INPUT or t == "image_input":
                 widget = QWidget()
                 v_layout = QVBoxLayout()
                 v_layout.setContentsMargins(0, 0, 0, 0)
@@ -121,12 +292,12 @@ class RenderPassSettingsWidget(QWidget):
                 widget.setLayout(v_layout)
                 self.controls[control_key] = combo
                 control = widget
-                self.layout.addWidget(control)
+                # No frame/border for mask/slot row
+                self.layout.addWidget(widget)
                 continue
 
-            if t == "switch":
-                if switch_count == 0:
-                    self.layout.addWidget(switch_group)
+            if ctype == ControlType.SWITCH or t in ["switch", "bool", "boolean"]:
+                # Stack switches horizontally in switch_group (never reset group/layout inside loop)
                 widget = QWidget()
                 hbox = QHBoxLayout()
                 hbox.setContentsMargins(0, 0, 0, 0)
@@ -135,14 +306,9 @@ class RenderPassSettingsWidget(QWidget):
                 toggle = QToggleSwitch()
                 toggle.setCheckable(True)
                 toggle.setChecked(bool(default_value))
-                print(f"[DEBUG] [CREATE] Switch '{label_text}' created, default={default_value}, checked={toggle.isChecked()}")
-                print(f"[DEBUG] [META] toggle metaObject methodCount: {toggle.metaObject().methodCount()}")
-                for i in range(toggle.metaObject().methodCount()):
-                    m = toggle.metaObject().method(i)
-                    print(f"[DEBUG] [META] toggle methodSignature: {m.methodSignature().data().decode()}")
                 hbox.addWidget(label)
                 hbox.addWidget(toggle)
-                hbox.addStretch()
+                hbox.addSpacing(12)
                 widget.setLayout(hbox)
                 switch_layout.addWidget(widget)
                 self.controls[control_key] = toggle
@@ -154,7 +320,6 @@ class RenderPassSettingsWidget(QWidget):
                         requires = setting.get("requires")
                         if requires and isinstance(requires, dict):
                             for req_label, req_value in requires.items():
-                                # Try both alias and label for dependency lookup
                                 resolved = self._resolve_control_key(req_label)
                                 target = self.controls.get(resolved) if resolved else None
                                 if target is None:
@@ -190,8 +355,11 @@ class RenderPassSettingsWidget(QWidget):
                 else:
                     print(f"[DEBUG] [WARNING] toggle has no 'toggled' signal for '{label_text}'")
                 continue
+        # After all settings, add switch_group to layout if any switches were added
+        if switch_count > 0:
+            self.layout.addWidget(switch_group)
             # Modular slider creation: each slider is mapped independently by label
-            if t == "slider":
+            if ctype == ControlType.SLIDER or t == "slider":
                 widget = QWidget()
                 v_layout = QVBoxLayout()
                 v_layout.setContentsMargins(0, 0, 0, 0)
@@ -251,11 +419,11 @@ class RenderPassSettingsWidget(QWidget):
                 minus_btn.setFixedSize(25, 25)
                 plus_btn.setFixedSize(25, 25)
 
-                def decrement_value():
+                def decrement_value(_checked=False, slider=slider, is_integer=is_integer):
                     new_value = max(slider.value() - (1 if is_integer else 0.1), slider.minimum())
                     slider.setValue(new_value)
 
-                def increment_value():
+                def increment_value(_checked=False, slider=slider, is_integer=is_integer):
                     new_value = min(slider.value() + (1 if is_integer else 0.1), slider.maximum())
                     slider.setValue(new_value)
 
@@ -277,12 +445,7 @@ class RenderPassSettingsWidget(QWidget):
 
                 self.controls[control_key] = {'slider': slider, 'value_edit': value_edit, '_widget': widget}
                 self.layout.addWidget(widget)
-                continue
-                widget.setLayout(v_layout)
-                self.layout.addWidget(widget)
-                # Store both slider and value_edit under the label for easy access
-                self.controls[control_key] = {'slider': slider, 'value_edit': value_edit}
-                continue
+                # ...existing code...
             else:
                 # If we had switches and now getting another control type
                 if switch_count > 0:
@@ -293,9 +456,9 @@ class RenderPassSettingsWidget(QWidget):
                     switch_count = 0
 
             # Regular control processing (non-switch)
-            if t == "switch":
+            if ctype == ControlType.SWITCH or t == "switch":
                 toggle = QToggleSwitch()
-                toggle.setObjectName(key)
+                toggle.setObjectName(control_key)
                 self.controls[control_key] = toggle
                 self.layout.addWidget(toggle)
 
@@ -344,9 +507,9 @@ class RenderPassSettingsWidget(QWidget):
                     print(f"[DEBUG] Connected 'toggled(bool)' for {label_text}, receivers={toggle.receivers(toggle.toggled)}")
                 else:
                     print(f"[DEBUG] WARNING: toggle has no 'toggled' signal for {label_text}")
-                continue
+                # ...existing code...
 
-            elif t == "dropdown":
+            elif ctype == ControlType.DROPDOWN or t == "dropdown":
                 widget = QWidget()
                 v_layout = QVBoxLayout()
                 v_layout.setContentsMargins(0, 0, 0, 0)
@@ -370,7 +533,7 @@ class RenderPassSettingsWidget(QWidget):
                 self.controls[control_key] = combo
                 control = widget
 
-            elif t in ["slider", "multislider", "dualslider"]:
+            elif ctype in (ControlType.SLIDER, ControlType.DUALSLIDER) or t in ["slider", "multislider", "dualslider"]:
                 widget = QWidget()
                 v_layout = QVBoxLayout()
                 v_layout.setContentsMargins(0, 0, 0, 0)
@@ -436,22 +599,22 @@ class RenderPassSettingsWidget(QWidget):
                     minus_btn.setFixedSize(25, 25)
                     plus_btn.setFixedSize(25, 25)
                     
-                    def decrement_lower():
+                    def decrement_lower(_checked=False, slider=slider):
                         lower, upper = slider.value()
                         new_lower = max(lower - 1, slider.minimum())
                         slider.setValue((new_lower, upper))
 
-                    def increment_lower():
+                    def increment_lower(_checked=False, slider=slider):
                         lower, upper = slider.value()
                         new_lower = min(lower + 1, upper)
                         slider.setValue((new_lower, upper))
 
-                    def decrement_upper():
+                    def decrement_upper(_checked=False, slider=slider):
                         lower, upper = slider.value()
                         new_upper = max(upper - 1, lower)
                         slider.setValue((lower, new_upper))
 
-                    def increment_upper():
+                    def increment_upper(_checked=False, slider=slider):
                         lower, upper = slider.value()
                         new_upper = min(upper + 1, slider.maximum())
                         slider.setValue((lower, new_upper))
@@ -541,14 +704,14 @@ class RenderPassSettingsWidget(QWidget):
                         plus_btn.setFixedSize(25, 25)
                         minus_btns.append(minus_btn)
                         plus_btns.append(plus_btn)
-                        def make_decrement(idx):
-                            def handler():
+                        def make_decrement(idx, slider=slider):
+                            def handler(_checked=False, slider=slider, idx=idx):
                                 values = list(slider.value())
                                 values[idx] = max(values[idx] - slider.singleStep(), slider.minimum())
                                 slider.setValue(tuple(values))
                             return handler
-                        def make_increment(idx):
-                            def handler():
+                        def make_increment(idx, slider=slider):
+                            def handler(_checked=False, slider=slider, idx=idx):
                                 values = list(slider.value())
                                 values[idx] = min(values[idx] + slider.singleStep(), slider.maximum())
                                 slider.setValue(tuple(values))
@@ -646,14 +809,14 @@ class RenderPassSettingsWidget(QWidget):
                     minus_btn.setFixedSize(25, 25)
                     plus_btn.setFixedSize(25, 25)
                     
-                    def decrement_value():
+                    def decrement_value(_checked=False, slider=slider, is_integer=is_integer):
                         if is_integer:
                             new_value = max(slider.value() - 1, slider.minimum())
                         else:
                             new_value = max(slider.value() - 0.1, slider.minimum())
                         slider.setValue(new_value)
-                    
-                    def increment_value():
+
+                    def increment_value(_checked=False, slider=slider, is_integer=is_integer):
                         if is_integer:
                             new_value = min(slider.value() + 1, slider.maximum())
                         else:
@@ -757,7 +920,6 @@ class RenderPassSettingsWidget(QWidget):
             control = self.controls.get(key)
             if control is None:
                 continue
-                
             try:
                 if isinstance(control, QButtonGroup):
                     # Handle radio button groups
@@ -779,9 +941,15 @@ class RenderPassSettingsWidget(QWidget):
                             control.setValue(int(float(val)))
                 elif isinstance(control, QDoubleSlider):
                     control.setValue(float(val))
+        
+                elif isinstance(control, QDoubleSlider):
+                    control.setValue(float(val))
                 elif isinstance(control, QRangeSlider):
-                    if isinstance(val, (list, tuple)) and len(val) == 2:
+                    # Expect a tuple/list of two numeric values
+                    try:
                         control.setValue(val)
+                    except Exception:
+                        pass
                 elif isinstance(control, QComboBox):
                     # Handle both string and numeric values
                     str_val = str(val)
@@ -789,18 +957,49 @@ class RenderPassSettingsWidget(QWidget):
                     if index >= 0:
                         control.setCurrentIndex(index)
                     else:
-                        # Try to find by data if text not found
-                        for i in range(control.count()):
-                            if control.itemText(i) == str_val:
-                                control.setCurrentIndex(i)
-                                break
-                        else:
-                            # Handle numeric values for dropdowns
-                            try:
-                                # Try to set as current text
-                                control.setCurrentText(str_val)
-                            except:
-                                pass
-                        
+                        # Try to set as current text or fallback to numeric match
+                        try:
+                            control.setCurrentText(str_val)
+                        except Exception:
+                            for i in range(control.count()):
+                                if control.itemText(i) == str_val:
+                                    control.setCurrentIndex(i)
+                                    break
+                elif hasattr(control, 'setText'):
+                    try:
+                        control.setText(str(val))
+                    except Exception:
+                        pass
+                else:
+                    # Unknown control type; skip silently
+                    pass
             except (ValueError, TypeError) as e:
                 print(f"Error setting value for {key}: {e}")
+
+    def get_slot_value(self, control_key: str) -> str | None:
+        """Return the selected slot name (string) for a slot-control, or None if not set."""
+        ctrl = self.controls.get(control_key)
+        if ctrl is None:
+            return None
+        if isinstance(ctrl, QComboBox):
+            val = ctrl.currentText()
+            return None if val == "<none>" else val
+        return None
+
+    def get_slot_enum(self, control_key: str):
+        """Return the selected slot as a Slot enum, or None if not set or not convertible."""
+        try:
+            from scripts.enums import Slot
+        except Exception:
+            import importlib.util, os
+            spec = importlib.util.spec_from_file_location("enums", os.path.join(os.path.dirname(__file__), "..", "enums.py"))
+            enums = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(enums)
+            Slot = enums.Slot
+        val = self.get_slot_value(control_key)
+        if val is None:
+            return None
+        try:
+            return Slot.from_value(val)
+        except Exception:
+            return None
