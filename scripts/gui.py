@@ -241,7 +241,7 @@ class GUI(QWidget):
     def get_sort_mode_enum(self):
         """Return the currently selected sort mode as a SortMode enum."""
         try:
-            from scripts.enums import SortMode
+            from enums import SortMode
         except Exception:
             # Fallback import in case running as a script
             import importlib.util, os

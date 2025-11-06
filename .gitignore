@@ -10,3 +10,5 @@ __pycache__/
 .vscode/settings.json
 temp_input.png
 temp_preview_input.png
+output-mean-shift-tests/
+.gitignore

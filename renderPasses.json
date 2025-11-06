@@ -94,5 +94,254 @@
         "default": false
       }
     }
+  },
+  "generate_contrast_mask": {
+    "func_name": "generate_contrast_mask",
+    "display_name": "Generate Mask (Contrast)",
+    "category": "Mask",
+    "settings": {
+      "limMin": {
+        "name": "limMin",
+        "label": "limMin",
+        "type": "int",
+        "min": 0.0,
+        "max": 255.0,
+        "default": 60.0
+      },
+      "limMax": {
+        "name": "limMax",
+        "label": "limMax",
+        "type": "int",
+        "min": 0.0,
+        "max": 255.0,
+        "default": 120.0
+      }
+    }
+  },
+  "luminance_mask": {
+    "func_name": "luminance_mask",
+    "display_name": "Generate Mask (Luminance)",
+    "category": "Mask",
+    "settings": {}
+  },
+  "subtract_images": {
+    "func_name": "subtract_images",
+    "display_name": "Subtract",
+    "category": "Mix",
+    "settings": {}
+  },
+  "kuwahara_wrapper": {
+    "func_name": "kuwahara_wrapper",
+    "display_name": "Kuwahara",
+    "category": "Modify",
+    "settings": {
+      "kernel": {
+        "name": "kernel",
+        "label": "Kernel",
+        "type": "int",
+        "min": 3.0,
+        "max": 24.0,
+        "default": 12.0
+      },
+      "regions": {
+        "name": "regions",
+        "label": "Regions",
+        "type": "int",
+        "min": 3.0,
+        "max": 24.0,
+        "default": 12.0
+      },
+      "isAnisotropic": {
+        "name": "isAnisotropic",
+        "label": "isAnisotropic",
+        "type": "bool",
+        "default": true
+      },
+      "stylePapari": {
+        "name": "stylePapari",
+        "label": "preserveEdge",
+        "type": "bool",
+        "default": false,
+        "requirements": {
+          "isAnisotropic": "True"
+        }
+      }
+    }
+  },
+  "cristalline_expansion": {
+    "func_name": "cristalline_expansion",
+    "display_name": "Grow Crystals",
+    "category": "Modify",
+    "settings": {
+      "c": {
+        "name": "c",
+        "label": "Seed Count",
+        "type": "int",
+        "min": 1.0,
+        "max": 250000.0,
+        "default": 1200.0
+      }
+    }
+  },
+  "mix_percent": {
+    "func_name": "mix_percent",
+    "display_name": "Mix (By percent)",
+    "category": "Mix",
+    "settings": {
+      "p": {
+        "name": "p",
+        "label": "Percent",
+        "type": "int",
+        "min": 0.0,
+        "max": 100.0,
+        "default": 50.0
+      }
+    }
+  },
+  "invert": {
+    "func_name": "invert",
+    "display_name": "Invert",
+    "category": "Modify",
+    "settings": {
+      "invert_type": {
+        "name": "invert_type",
+        "label": "Type",
+        "type": "str",
+        "options": [
+          "RGB",
+          "Lum",
+          "R",
+          "G",
+          "B"
+        ],
+        "default": "RGB",
+        "ui_type": "dropdown"
+      },
+      "impact_factor": {
+        "name": "impact_factor",
+        "label": "Impact",
+        "type": "float",
+        "min": 0.0,
+        "max": 100.0,
+        "default": 100.0
+      }
+    }
+  },
+  "alpha_over": {
+    "func_name": "alpha_over",
+    "display_name": "AlphaOver",
+    "category": "Mix",
+    "settings": {}
+  },
+  "difference": {
+    "func_name": "difference",
+    "display_name": "Difference",
+    "category": "Mix",
+    "settings": {}
+  },
+  "maxAdd": {
+    "func_name": "maxAdd",
+    "display_name": "Add (Clamp)",
+    "category": "Mix",
+    "settings": {}
+  },
+  "lerp": {
+    "func_name": "lerp",
+    "display_name": "Lerp",
+    "category": "Mix",
+    "settings": {}
+  },
+  "meanShiftClusteringGPU": {
+    "func_name": "meanShiftClusteringGPU",
+    "display_name": "Mean Shift Clustering (GPU)",
+    "category": "Modify",
+    "settings": {
+      "spatial_radius": {
+        "name": "spatial_radius",
+        "label": "Spatial Radius",
+        "type": "int",
+        "min": 1.0,
+        "max": 64.0,
+        "default": 50.0
+      },
+      "color_radius": {
+        "name": "color_radius",
+        "label": "Color Radius",
+        "type": "int",
+        "min": 1.0,
+        "max": 256.0,
+        "default": 20.0
+      },
+      "max_iter": {
+        "name": "max_iter",
+        "label": "Max. Iterations",
+        "type": "int",
+        "min": 1.0,
+        "max": 250.0,
+        "default": 20.0
+      }
+    }
+  },
+  "dither": {
+    "func_name": "dither",
+    "display_name": "Dither",
+    "category": "Modify",
+    "settings": {
+      "num_colors": {
+        "name": "num_colors",
+        "label": "Amount of Colors",
+        "type": "int",
+        "min": 3.0,
+        "max": 512.0,
+        "default": 9.0
+      },
+      "method": {
+        "name": "method",
+        "label": "Dithering Algorithm",
+        "type": "str",
+        "options": [
+          "none",
+          "floyd_steinberg",
+          "atkinson"
+        ],
+        "default": "none",
+        "ui_type": "dropdown"
+      }
+    }
+  },
+  "quantize": {
+    "func_name": "quantize",
+    "display_name": "Quantize",
+    "category": "Modify",
+    "settings": {
+      "num_colors": {
+        "name": "num_colors",
+        "label": "Number of unique colors",
+        "type": "int",
+        "min": 3.0,
+        "max": 256.0,
+        "default": 16.0
+      }
+    }
+  },
+  "reduce_size": {
+    "func_name": "reduce_size",
+    "display_name": "Downscale",
+    "category": "",
+    "settings": {
+      "resolution": {
+        "name": "resolution",
+        "label": "Resolution",
+        "type": "str",
+        "options": [
+          "720x1280",
+          "1080x1920",
+          "1440x2560",
+          "2160x3840"
+        ],
+        "default": "720x1280",
+        "ui_type": "dropdown"
+      }
+    }
   }
 }

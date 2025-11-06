@@ -13,12 +13,13 @@ from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from math import exp, pi
 
+import colorsys
 import numpy as np
 import pyopencl as cl
 from PIL import Image
 from tqdm import tqdm
 
-import converters
+import converters as converters
 from timing import timing
 
 
@@ -302,6 +303,8 @@ def sort(img: Image.Image,
         # Create a white mask for the whole image if no mask provided
         mask = Image.new("RGB", img.size, (255, 255, 255))
         chunks = get_coherent_image_chunks(mask, rotate)
+    # Do not show the mask during processing (avoids popping GUI windows during
+    # automated runs/tests). If you need to debug visually, enable explicitly.
     
     if rotate:
         img = img.rotate(90, expand=True)
@@ -312,24 +315,36 @@ def sort(img: Image.Image,
     img_pixels = {(x, y): img.getpixel((x, y)) for x in range(img.width) for y in range(img.height)}
 
     def process_chunk(chunk):
-        chunk_dict = {}
+        """
+        Process a single chunk of pixels, applying the sorting effect only to white areas of the mask.
+        """
+        # Compute the list of coordinates that are white in the mask and the
+        # corresponding pixel values from the source image. We must preserve
+        # the coordinate list so we can write sorted pixels back to the exact
+        # positions that were part of the sort region.
+        coords_to_sort = [coord for coord in chunk if mask.getpixel(coord) == (255, 255, 255)]
+        if not coords_to_sort:
+            return
+        chunk_pixels = [img_pixels[coord] for coord in coords_to_sort]
 
-        for x, y in chunk:
-            if x not in chunk_dict:
-                chunk_dict[x] = []
-            chunk_dict[x].append((y, img_pixels[(x, y)]))
+        # Sort the chunk based on the selected mode
+        if mode == "lum":
+            chunk_pixels.sort(key=lambda px: sum(px[:3]) / 3)  # Average luminance
+        elif mode == "hue":
+            chunk_pixels.sort(key=lambda px: colorsys.rgb_to_hsv(*px[:3])[0])
+        elif mode == "r":
+            chunk_pixels.sort(key=lambda px: px[0])
+        elif mode == "g":
+            chunk_pixels.sort(key=lambda px: px[1])
+        elif mode == "b":
+            chunk_pixels.sort(key=lambda px: px[2])
 
-        for x in chunk_dict:
-            if not flip_dir:
-                sorted_pixels = sorted(chunk_dict[x], key=lambda tup: converters.convert(tup[1], mode=mode))
-            else:
-                sorted_pixels = sorted(chunk_dict[x], key=lambda tup: -converters.convert(tup[1], mode=mode) + 254)
-
-            target_ys = sorted([y for y, _ in chunk_dict[x]])
-
-            with lock:
-                for i in range(len(target_ys)):
-                    out.putpixel((x, target_ys[i]), sorted_pixels[i][1])
+        # Write sorted pixels back to the image at the same coordinates that
+        # were selected for sorting (coords_to_sort). Use the lock to avoid
+        # concurrent writes to the PIL image object.
+        with lock:
+            for coord, pixel in zip(coords_to_sort, chunk_pixels):
+                out.putpixel(coord, pixel)
 
     threads = []
     for chunk in chunks:
@@ -395,7 +410,7 @@ def blur_box(img: Image.Image, kernel: int, num_threads: int = 64) -> Image.Imag
 @timing
 def blur_box_gpu(img: Image.Image, blur_kernel: int) -> Image.Image: #globalignore
     """GPU-accelerated box blur with proper resource cleanup. Accepts kernel_size and converts to radius."""
-    from scripts.gpu_context import opencl_context
+    from gpu_context import opencl_context
 
     img = img.convert("RGB")
     img_np = np.array(img).astype(np.uint8)
@@ -406,7 +421,7 @@ def blur_box_gpu(img: Image.Image, blur_kernel: int) -> Image.Image: #globaligno
 
     with opencl_context() as (ctx, queue):
         # OpenCL-Programm (Box Blur)
-        shader_path = os.path.join(os.path.dirname(__file__), "shaders", "box_blur.cl")
+        shader_path = os.path.join(os.path.dirname(__file__), "shaders", "box_blur.opencl")
         with open(shader_path, "r", encoding="utf-8") as f:
             program_src = f.read()
 
@@ -793,7 +808,7 @@ def kuwahara_gpu(img: Image.Image, kernel_size: float) -> Image.Image: #globalig
         height, width, channels = img_np.shape
 
         import os
-        cl_path = os.path.join(os.path.dirname(__file__), "shaders", "kuwahara_filter.cl")
+        cl_path = os.path.join(os.path.dirname(__file__), "shaders", "kuwahara_filter.opencl")
         with open(cl_path, "r", encoding="utf-8") as f:
             program_src = f.read()
 
@@ -848,7 +863,7 @@ def anisotropic_kuwahara_gpu(img: Image.Image, kernel_size: float, regions: int 
         height, width, channels = img_np.shape
 
         import os
-        cl_path = os.path.join(os.path.dirname(__file__), "shaders", "anisotropic_kuwahara.cl")
+        cl_path = os.path.join(os.path.dirname(__file__), "shaders", "anisotropic_kuwahara.opencl")
         with open(cl_path, "r", encoding="utf-8") as f:
             program_src = f.read()
 
@@ -881,7 +896,7 @@ def anisotropic_kuwahara_gpu(img: Image.Image, kernel_size: float, regions: int 
         return _cpu_fallback(img, kernel_size, regions)
 
 
-def anisotropic_kuwahara_papari_gpu(
+def anisotropic_kuwahara_papari_gpu( #globalignore
     img: Image.Image,
     kernel_size: int | float,
     regions: int = 8,
@@ -962,7 +977,7 @@ def anisotropic_kuwahara_papari_gpu(
     gray = (0.299*arr[...,0] + 0.587*arr[...,1] + 0.114*arr[...,2]).astype(np.float32) / 255.0
 
     import os
-    cl_path = os.path.join(os.path.dirname(__file__), "shaders", "papari_aniso_kuwahara.cl")
+    cl_path = os.path.join(os.path.dirname(__file__), "shaders", "papari_aniso_kuwahara.opencl")
     with open(cl_path, "r", encoding="utf-8") as f:
         prg_src = f.read()
 
@@ -1118,7 +1133,7 @@ def mix_by_percent(img1: Image.Image, img2: Image.Image, mix_factor: float) -> I
     """Alias for mix_percent to match render pass name."""
     return mix_percent(img1, img2, int(mix_factor))
 
-def blur(img: Image.Image, blur_type: str, blur_kernel: int) -> Image.Image:
+def blur(img: Image.Image, blur_type: str, blur_kernel: int) -> Image.Image: #globalignore
     """Alias for blur functions to match render pass name."""
     if      blur_type == "Box"       : return blur_box_gpu(  img, kernel=int(blur_kernel))
     elif    blur_type == "Gaussian"  : return blur_gaussian( img, kernel=int(blur_kernel))
@@ -1338,3 +1353,407 @@ def sharpen(img: Image.Image, strength: float, kernel_size: int) -> Image.Image:
     sharpened_np = np.clip(sharpened_np, 0, 255).astype(np.uint8)
 
     return Image.fromarray(sharpened_np, mode='RGB')
+
+def meanShiftCluster(
+    img: Image.Image,
+    spatial_radius: int = 5,
+    color_radius: int = 10,
+    max_iter: int = 100,
+    flat_regions: bool = True
+) -> Image.Image:
+    if spatial_radius < 1:
+        raise ValueError("Spatial radius must be positive")
+    if color_radius < 1:
+        raise ValueError("Color radius must be positive")
+    if max_iter < 1:
+        raise ValueError("Max iterations must be positive")
+    img = img.convert("RGB")
+    img_np = np.array(img, dtype=np.float32)
+    height, width, channels = img_np.shape
+
+    # First pass: compute the converged mode (mean) for each pixel
+    modes = np.zeros((height, width, 3), dtype=np.float32)
+    spatial_radius_sq = spatial_radius * spatial_radius
+    color_radius_sq = color_radius * color_radius
+
+    for y in tqdm(range(height), desc="Computing modes (mean-shift)"):
+        for x in range(width):
+            mean = img_np[y, x].copy()
+            for iteration in range(max_iter):
+                sum_color = np.zeros(3, dtype=np.float32)
+                count = 0
+                y_start = max(0, y - spatial_radius)
+                y_end = min(height, y + spatial_radius + 1)
+                x_start = max(0, x - spatial_radius)
+                x_end = min(width, x + spatial_radius + 1)
+
+                for ny in range(y_start, y_end):
+                    for nx in range(x_start, x_end):
+                        spatial_dist_sq = (ny - y) ** 2 + (nx - x) ** 2
+                        if spatial_dist_sq > spatial_radius_sq:
+                            continue
+                        color_dist_sq = np.sum((img_np[ny, nx] - mean) ** 2)
+                        if color_dist_sq <= color_radius_sq:
+                            sum_color += img_np[ny, nx]
+                            count += 1
+
+                if count > 0:
+                    new_mean = sum_color / count
+                    if np.linalg.norm(new_mean - mean) < 1e-3:
+                        break
+                    mean = new_mean
+
+            modes[y, x] = np.clip(mean, 0, 255)
+
+    # If the caller wants the old behavior (gradients / per-pixel modes),
+    # return the per-pixel converged mean directly.
+    if not flat_regions:
+        out_np = modes.astype(np.uint8)
+        return Image.fromarray(out_np, mode='RGB')
+
+    # Second pass: group similar modes into discrete clusters (so each region
+    # gets a single representative color instead of smooth gradients). We
+    # cluster based on color distance using color_radius as the merge radius.
+    labels = -1 * np.ones((height, width), dtype=np.int32)
+    centers: list[np.ndarray] = []
+    next_label = 0
+
+    for y in range(height):
+        for x in range(width):
+            mode = modes[y, x]
+            assigned = False
+            for i, center in enumerate(centers):
+                if np.sum((mode - center) ** 2) <= color_radius_sq:
+                    labels[y, x] = i
+                    assigned = True
+                    break
+            if not assigned:
+                centers.append(mode.copy())
+                labels[y, x] = next_label
+                next_label += 1
+
+    # Compute average color for each label using the original image pixels
+    avg_colors = np.zeros((next_label, 3), dtype=np.float32)
+    counts = np.zeros((next_label,), dtype=np.int32)
+    for y in range(height):
+        for x in range(width):
+            lbl = labels[y, x]
+            if lbl >= 0:
+                avg_colors[lbl] += img_np[y, x]
+                counts[lbl] += 1
+
+    # Avoid division by zero (shouldn't happen, but be safe)
+    for i in range(next_label):
+        if counts[i] > 0:
+            avg_colors[i] = avg_colors[i] / counts[i]
+        else:
+            avg_colors[i] = centers[i]
+
+    # Build output image where each pixel receives its cluster average color
+    out_np = np.zeros_like(img_np)
+    for y in range(height):
+        for x in range(width):
+            lbl = labels[y, x]
+            out_np[y, x] = np.clip(avg_colors[lbl], 0, 255)
+
+    out_np = out_np.astype(np.uint8)
+    return Image.fromarray(out_np, mode='RGB')
+
+
+def meanShiftClusteringGPU(
+        img: Image.Image,
+        spatial_radius: int = 5,
+        color_radius: int = 10,
+        max_iter: int = 100
+) -> Image.Image:
+    if spatial_radius < 1:
+        raise ValueError("Spatial radius must be positive")
+    if color_radius < 1:
+        raise ValueError("Color radius must be positive")
+    if max_iter < 1:
+        raise ValueError("Max iterations must be positive")
+
+    try:
+        from gpu_context import opencl_context
+    except ImportError:
+        print("\033[91mCould not import GPU context, using CPU fallback...\033[0m")
+        return meanShiftCluster(img, spatial_radius, color_radius, max_iter)
+
+    def _cpu_fallback(img: Image.Image, s_rad: int, c_rad: int, m_iter: int) -> Image.Image:
+        """CPU fallback implementation when GPU/OpenCL is unavailable."""
+        print("\033[91mGPU/OpenCL unavailable, using CPU fallback...\033[0m")
+        return meanShiftCluster(img, s_rad, c_rad, m_iter)
+
+    try:
+        img = img.convert("RGB")
+        img_np = np.array(img).astype(np.float32)
+        height, width, channels = img_np.shape
+
+        import os
+        cl_path = os.path.join(os.path.dirname(__file__), "shaders", "mean_shift.opencl")
+        with open(cl_path, "r", encoding="utf-8") as f:
+            program_src = f.read()
+
+        with opencl_context() as (ctx, queue):
+            with suppress_output():
+                program = cl.Program(ctx, program_src).build()
+
+            flat_input = img_np.flatten()
+            output_np = np.empty_like(flat_input)
+
+            mf = cl.mem_flags
+            input_buf = cl.Buffer(ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=flat_input)
+            output_buf = cl.Buffer(ctx, mf.WRITE_ONLY, output_np.nbytes)
+
+            compute_kernel = program.mean_shift
+            compute_kernel.set_args(input_buf, output_buf,
+                            np.int32(width), np.int32(height),
+                            np.int32(channels), np.int32(spatial_radius),
+                            np.int32(color_radius), np.int32(max_iter))
+
+            global_size = (width, height)
+            cl.enqueue_nd_range_kernel(queue, compute_kernel, global_size, None)
+            cl.enqueue_copy(queue, output_np, output_buf)
+            queue.finish()
+
+            output_img = output_np.reshape((height, width, channels))
+            output_img = np.clip(output_img, 0, 255).astype(np.uint8)
+            return Image.fromarray(output_img, 'RGB')
+    except Exception as e:
+        print(f"OpenCL error: {str(e)}. Falling back to CPU implementation.")
+        return _cpu_fallback(img, spatial_radius, color_radius, max_iter)
+    
+from enum import Enum
+
+class DitherMethods(Enum):
+    NONE = 0
+    FLOYD_STEINBERG = 1
+    ATKINSON = 2
+
+def dither(
+        img: Image.Image,
+        num_colors: int,
+        method: DitherMethods | str
+) -> Image.Image:
+    if not 2 < num_colors <= 256:
+        raise ValueError("Number of colors must be at least 3 and at most 256")
+    if method == DitherMethods.NONE:
+        print("No dithering applied, no dither method specified; returning original image.")
+        return img
+    
+    if isinstance(method, str):
+        method = method.upper()
+        if method.lower() == "floyd_steinberg":
+            method = DitherMethods.FLOYD_STEINBERG
+        elif method.lower() == "atkinson":
+            method = DitherMethods.ATKINSON
+        else:
+            raise ValueError(f"Unknown dithering method: {method}")
+
+    img = img.convert("RGB")
+    img_np = np.array(img).astype(np.float32)
+
+    if method == DitherMethods.FLOYD_STEINBERG:
+        img_np = __dither_floyd_steinberg(img_np, num_colors)
+    elif method == DitherMethods.ATKINSON:
+        img_np = __dither_atkinson(img_np, num_colors)
+
+    # Convert to PIL image then quantize to ensure the resulting image
+    # contains at most `num_colors` distinct colors. The error-diffusion
+    # steps above operate per-channel and can produce many colors; using
+    # PIL's quantize enforces a global palette of the requested size.
+    result_img = Image.fromarray(np.clip(img_np, 0, 255).astype(np.uint8), 'RGB')
+    try:
+        # Use MEDIANCUT (default) to build an adaptive palette. For
+        # Floyd-Steinberg we enable dithering in quantize; for Atkinson
+        # the algorithm above approximates error diffusion so disable
+        # additional dithering during quantize.
+        if method == DitherMethods.FLOYD_STEINBERG:
+            qimg = result_img.quantize(colors=num_colors, method=Image.MEDIANCUT, dither=Image.FLOYDSTEINBERG)
+        else:
+            qimg = result_img.quantize(colors=num_colors, method=Image.MEDIANCUT, dither=Image.NONE)
+
+        # Convert back to RGB for consistent return type
+        return qimg.convert('RGB')
+    except Exception:
+        # If quantize is unavailable for any reason, fall back to the
+        # non-quantized result (better than raising here).
+        return result_img
+
+def __dither_floyd_steinberg(img_np: np.ndarray, num_colors: int) -> np.ndarray:
+    height, width, channels = img_np.shape
+    quantization_level = 256 // num_colors
+
+    for y in range(height):
+        for x in range(width):
+            old_pixel = img_np[y, x].copy()
+            new_pixel = np.round(old_pixel / quantization_level) * quantization_level
+            img_np[y, x] = new_pixel
+            error = old_pixel - new_pixel
+
+            if x + 1 < width:
+                img_np[y, x + 1] += error * 7 / 16
+            if x - 1 >= 0 and y + 1 < height:
+                img_np[y + 1, x - 1] += error * 3 / 16
+            if y + 1 < height:
+                img_np[y + 1, x] += error * 5 / 16
+            if x + 1 < width and y + 1 < height:
+                img_np[y + 1, x + 1] += error * 1 / 16
+
+    return np.clip(img_np, 0, 255).astype(np.uint8)
+
+def __dither_atkinson(img_np: np.ndarray, num_colors: int) -> np.ndarray:
+    height, width, _ = img_np.shape
+    quantization_level = 256 // num_colors
+
+    for y in range(height):
+        for x in range(width):
+            old_pixel = img_np[y, x].copy()
+            new_pixel = np.round(old_pixel / quantization_level) * quantization_level
+            img_np[y, x] = new_pixel
+            error = old_pixel - new_pixel
+
+            if x + 1 < width:
+                img_np[y, x + 1] += error * 1 / 8
+            if x + 2 < width:
+                img_np[y, x + 2] += error * 1 / 8
+            if x - 1 >= 0 and y + 1 < height:
+                img_np[y + 1, x - 1] += error * 1 / 8
+            if y + 1 < height:
+                img_np[y + 1, x] += error * 1 / 8
+            if x + 1 < width and y + 1 < height:
+                img_np[y + 1, x + 1] += error * 1 / 8
+            if y + 2 < height:
+                img_np[y + 2, x] += error * 1 / 8
+
+    return np.clip(img_np, 0, 255).astype(np.uint8)
+
+def quantize(
+        img: Image.Image,
+        num_colors: int = 16,
+    ) -> Image.Image:
+    if not 2 < num_colors <= 256:
+        raise ValueError("Number of colors must be at least 3 and at most 256")
+    
+    img = img.convert("RGB")
+    arr = np.array(img, dtype=np.float32)
+    h, w, _ = arr.shape
+    pixels = arr.reshape(-1, 3)
+
+    # If there are already no more unique colors than requested, return copy
+    uniq = np.unique(pixels.astype(np.uint8), axis=0)
+    if uniq.shape[0] <= num_colors:
+        return Image.fromarray(pixels.reshape((h, w, 3)).astype(np.uint8), "RGB")
+
+    # K-Means++ initialization
+    rng = np.random.default_rng(0)
+    n = pixels.shape[0]
+    centers = np.empty((num_colors, 3), dtype=np.float32)
+    first_idx = rng.integers(0, n)
+    centers[0] = pixels[first_idx]
+    for k in range(1, num_colors):
+        # distance from each pixel to nearest existing center
+        dists = np.min(np.sum((pixels[:, None, :] - centers[:k][None, :, :]) ** 2, axis=2), axis=1)
+        probs = dists / dists.sum()
+        choose = rng.choice(n, p=probs)
+        centers[k] = pixels[choose]
+
+    # K-Means iterations (vectorized)
+    max_iter = 30
+    tol = 1e-2
+    for _ in range(max_iter):
+        # assign
+        dists = np.sum((pixels[:, None, :] - centers[None, :, :]) ** 2, axis=2)  # shape (N, K)
+        labels = np.argmin(dists, axis=1)
+
+        # recompute centers
+        new_centers = np.zeros_like(centers)
+        changed = False
+        for k in range(num_colors):
+            mask = labels == k
+            if mask.any():
+                new_centers[k] = pixels[mask].mean(axis=0)
+            else:
+                # reinitialize empty cluster to a random pixel
+                new_centers[k] = pixels[rng.integers(0, n)]
+        shift = np.linalg.norm(new_centers - centers, axis=1).sum()
+        centers = new_centers
+        if shift <= tol:
+            break
+
+    # Map pixels to palette and build output image
+    dists = np.sum((pixels[:, None, :] - centers[None, :, :]) ** 2, axis=2)
+    labels = np.argmin(dists, axis=1)
+    quant_pixels = centers[labels].astype(np.uint8).reshape((h, w, 3))
+
+    return Image.fromarray(quant_pixels, "RGB")
+
+def reduce_size(
+    img: Image.Image,
+    resolution: str | tuple[str, str] = "1080x1920",
+    fit_mode: str = "fit",
+    upscale: bool = False
+) -> Image.Image:
+    """
+    Resize image to the given target resolution.
+
+    Parameters:
+    - img: PIL.Image
+    - resolution: "WIDTHxHEIGHT" string or (width, height) tuple
+    - fit_mode: "fit" (preserve aspect, fit inside), "crop" (fill and center-crop), or "stretch"
+    - upscale: if False, do not enlarge images beyond their original size
+
+    Returns:
+    - resized PIL.Image
+    """
+    # Parse resolution
+    if isinstance(resolution, str):
+        try:
+            target_w, target_h = map(int, resolution.lower().split("x"))
+        except Exception as e:
+            raise ValueError("resolution must be like '1080x1920' or (w,h)") from e
+    elif isinstance(resolution, tuple) and len(resolution) == 2:
+        target_w, target_h = map(int, resolution)
+    else:
+        raise ValueError("resolution must be a 'WIDTHxHEIGHT' string or a (width, height) tuple")
+
+    if target_w <= 0 or target_h <= 0:
+        raise ValueError("Target width and height must be positive integers")
+
+    src_w, src_h = img.size
+
+    # If no upscaling allowed clamp target to source
+    if not upscale:
+        target_w = min(target_w, src_w)
+        target_h = min(target_h, src_h)
+
+    resample = Image.Resampling.LANCZOS
+
+    fit_mode = fit_mode.lower()
+    if fit_mode == "stretch":
+        return img.resize((target_w, target_h), resample)
+
+    # compute scale factors
+    scale_w = target_w / src_w
+    scale_h = target_h / src_h
+
+    if fit_mode == "fit":
+        scale = min(scale_w, scale_h)
+        new_w = max(1, int(round(src_w * scale)))
+        new_h = max(1, int(round(src_h * scale)))
+        return img.resize((new_w, new_h), resample)
+
+    if fit_mode == "crop":
+        # scale to cover target, then center-crop
+        scale = max(scale_w, scale_h)
+        new_w = max(1, int(round(src_w * scale)))
+        new_h = max(1, int(round(src_h * scale)))
+        resized = img.resize((new_w, new_h), resample)
+
+        left = (new_w - target_w) // 2
+        top = (new_h - target_h) // 2
+        right = left + target_w
+        bottom = top + target_h
+        return resized.crop((left, top, right, bottom))
+
+    raise ValueError("fit_mode must be one of: 'fit', 'crop', 'stretch'")

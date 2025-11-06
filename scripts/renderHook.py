@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 
 
 try:
-    from scripts.enums import Slot
+    from enums import Slot
 except Exception:
     import importlib.util, os
     spec = importlib.util.spec_from_file_location("enums", os.path.join(os.path.dirname(__file__), "enums.py"))

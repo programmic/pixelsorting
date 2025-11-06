@@ -47,11 +47,21 @@ class MaskWidget(QWidget):
         """
         Get the current values of the mask widget.
 
-        :return: A dictionary containing the enabled state and selected slot.
+        :return: A dictionary containing the enabled state, selected slot, and mask data.
         """
+        mask_data = None
+        # available_slots may be a list or dict; only attempt lookup if dict
+        if self.selected_slot:
+            if isinstance(self.available_slots, dict):
+                mask_data = self.available_slots.get(self.selected_slot)
+            else:
+                # no direct mask data available when slots are a list
+                mask_data = None
+
         return {
             "enabled": self.enabled.isChecked(),
-            "slot": self.selected_slot
+            "slot": self.selected_slot,
+            "mask_data": mask_data
         }
 
     def load_settings(self, settings_dict):

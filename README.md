@@ -255,7 +255,7 @@ This project provides a modular system for configuring and executing image rende
 ## Example
 
 ```python
-from scripts.guiElements.renderPassWidget import RenderPassWidget
+from guiElements.renderPassWidget import RenderPassWidget
 
 def on_select_slot(mode, widget):
     # Handle slot selection logic

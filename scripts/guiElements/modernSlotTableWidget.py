@@ -5,9 +5,9 @@ from PySide6.QtWidgets import (QWidget, QHBoxLayout, QPushButton, QGraphicsDropS
 from PySide6.QtCore import Qt, Signal, QPoint, QSize, QTimer, QRect, QEvent
 from PySide6.QtGui import (QPixmap, QPainter, QBrush, QColor, QPen, QLinearGradient,
                           QPainterPath, QFont, QFontMetrics, QPalette)
-from .modernSlotPreviewWidgetMerged import ModernSlotPreviewWidget
-from .slotContextMenu import SlotContextMenu
-from .previewManager import preview_manager
+from guiElements.modernSlotPreviewWidgetMerged import ModernSlotPreviewWidget
+from guiElements.slotContextMenu import SlotContextMenu
+from guiElements.previewManager import preview_manager
 import weakref
 from PIL.ImageQt import ImageQt
 import math
@@ -36,29 +36,36 @@ class ModernSlotButton(QPushButton):
         event.accept()
 
     def dropEvent(self, event):
-        """Propagate drop event to parent widget for handling."""
+        """Delegate drop handling to the parent table widget's helper.
+
+        Constructing a new QDropEvent and calling parent.dropEvent caused
+        platform inconsistencies; instead call the table widget's
+        `_process_drop_for_slot` directly with the mime contents.
+        """
         self.setStyleSheet("")
-        # Forward event to parent (ModernSlotTableWidget)
         parent = self.parent()
-        if parent:
-            # Map event position to parent coordinates
-            from PySide6.QtCore import QPoint
-            # Construct a new QDropEvent mapped to the parent's coordinate space
-            from PySide6.QtGui import QDropEvent
-            from PySide6.QtCore import QPointF
-            mapped_pos = self.mapToParent(event.pos())
-            # QDropEvent requires a QPointF for position on some platforms
-            qposf = QPointF(mapped_pos.x(), mapped_pos.y())
-            new_event = QDropEvent(
-                qposf,
-                event.dropAction(),
-                event.mimeData(),
-                event.mouseButtons(),
-                event.keyboardModifiers()
-            )
-            parent.dropEvent(new_event)
-        else:
-            event.ignore()
+        if parent and hasattr(parent, '_process_drop_for_slot'):
+            mime = event.mimeData()
+            filename = None
+            image_data = None
+            if mime.hasText():
+                filename = mime.text().strip()
+            if mime.hasUrls():
+                urls = mime.urls()
+                if urls:
+                    filename = urls[0].toLocalFile()
+            if mime.hasFormat('image/png'):
+                image_data = mime.data('image/png')
+
+            handled = parent._process_drop_for_slot(self.slot_name, filename, image_data, event)
+            if handled:
+                try:
+                    event.acceptProposedAction()
+                except Exception:
+                    pass
+                return
+
+        event.ignore()
     """A modern styled button for slot display with proper scaling and animations."""
     
     def __init__(self, slot_name, parent=None):
@@ -404,89 +411,100 @@ class ModernSlotTableWidget(QWidget):
             btn.setStyleSheet("")
         
     def dropEvent(self, event):
-        """Handle drop events with proper positioning and support for file/image drops."""
+        """Handle drop events with proper positioning and support for file/image drops.
+
+        This delegates per-slot handling to `_process_drop_for_slot` so the
+        same logic can be called from a child's `dropEvent` (ModernSlotButton).
+        """
         drop_pos = event.pos()
-        handled = False
         # Try to extract filename or image data from mime data (text, urls, or image data)
         filename = None
         image_data = None
-        if event.mimeData().hasText():
-            filename = event.mimeData().text().strip()
-        elif event.mimeData().hasUrls():
-            urls = event.mimeData().urls()
+        mime = event.mimeData()
+        if mime.hasText():
+            filename = mime.text().strip()
+        elif mime.hasUrls():
+            urls = mime.urls()
             if urls:
                 filename = urls[0].toLocalFile()
-        if event.mimeData().hasFormat("image/png"):
-            image_data = event.mimeData().data("image/png")
-        # Find which button was dropped on
+        if mime.hasFormat("image/png"):
+            image_data = mime.data("image/png")
+
+        # Find which button was dropped on and delegate
         for slot_name, btn in self.buttons:
             btn_pos = btn.mapFrom(self, drop_pos)
             if btn.rect().contains(btn_pos):
-                main_gui = self.window()
-                found = False
-                # 1. Try imported_images by filename
-                if filename:
-                    if hasattr(main_gui, 'imported_images') and filename in getattr(main_gui, 'imported_images', {}):
-                        image = main_gui.imported_images[filename]
-                        self.set_image(slot_name, image)
-                        self.image_dropped.emit(slot_name, image)
-                        event.acceptProposedAction()
-                        handled = True
-                        found = True
-                    else:
-                        # Try parent chain for imported_images
-                        parent = self.parent()
-                        while parent:
-                            if hasattr(parent, 'imported_images'):
-                                if filename in parent.imported_images:
-                                    image = parent.imported_images[filename]
-                                    self.set_image(slot_name, image)
-                                    self.image_dropped.emit(slot_name, image)
-                                    event.acceptProposedAction()
-                                    handled = True
-                                    found = True
-                                    break
-                                break
-                            parent = parent.parent()
-                # 2. If not found, try to load from file (external drag)
-                if not found and filename:
-                    import os
-                    from PIL import Image
-                    if os.path.isfile(filename):
-                        try:
-                            image = Image.open(filename)
+                handled = self._process_drop_for_slot(slot_name, filename, image_data, event)
+                self.setStyleSheet("")
+                return
+
+        # Nothing handled
+        event.ignore()
+        self.setStyleSheet("")
+
+    def _process_drop_for_slot(self, slot_name, filename, image_data, event):
+        """Process a drop for a specific slot. Returns True if handled."""
+        main_gui = self.window()
+        found = False
+        handled = False
+
+        # 1. Try imported_images by filename (prefer main GUI)
+        if filename:
+            if hasattr(main_gui, 'imported_images') and filename in getattr(main_gui, 'imported_images', {}):
+                image = main_gui.imported_images[filename]
+                self.set_image(slot_name, image)
+                self.image_dropped.emit(slot_name, image)
+                event.acceptProposedAction()
+                return True
+            else:
+                # Try parent chain for imported_images
+                parent = self.parent()
+                while parent:
+                    if hasattr(parent, 'imported_images'):
+                        if filename in parent.imported_images:
+                            image = parent.imported_images[filename]
                             self.set_image(slot_name, image)
                             self.image_dropped.emit(slot_name, image)
                             event.acceptProposedAction()
-                            handled = True
-                            found = True
-                        except Exception as e:
-                            print(f"Error loading dropped image file: {e}")
-                    else:
-                        print(f"Dropped file does not exist: {filename}")
-                # 3. If not found and image data is present, use it
-                if not found and image_data:
-                    from PIL import Image
-                    from io import BytesIO
-                    try:
-                        image = Image.open(BytesIO(image_data))
-                        self.set_image(slot_name, image)
-                        self.image_dropped.emit(slot_name, image)
-                        event.acceptProposedAction()
-                        handled = True
-                        found = True
-                    except Exception as e:
-                        print(f"Error loading dropped image from bytes: {e}")
-                if not handled:
-                    # Show feedback for invalid drop
-                    from PySide6.QtWidgets import QMessageBox
-                    QMessageBox.warning(self, "Drop Failed", "Could not import the dropped image.")
-                    event.ignore()
-                self.setStyleSheet("")
-                return
-        if not handled:
-            event.ignore()
-        self.setStyleSheet("")
+                            return True
+                        break
+                    parent = parent.parent()
+
+        # 2. If not found, try to load from file (external drag)
+        if filename:
+            import os
+            from PIL import Image
+            if os.path.isfile(filename):
+                try:
+                    image = Image.open(filename)
+                    self.set_image(slot_name, image)
+                    self.image_dropped.emit(slot_name, image)
+                    event.acceptProposedAction()
+                    return True
+                except Exception as e:
+                    print(f"Error loading dropped image file: {e}")
+            else:
+                # Not a local file — could be plain text filename, ignore
+                pass
+
+        # 3. If not found and image data is present, use it
+        if image_data:
+            from PIL import Image
+            from io import BytesIO
+            try:
+                image = Image.open(BytesIO(image_data))
+                self.set_image(slot_name, image)
+                self.image_dropped.emit(slot_name, image)
+                event.acceptProposedAction()
+                return True
+            except Exception as e:
+                print(f"Error loading dropped image from bytes: {e}")
+
+        # If not handled show feedback
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.warning(self, "Drop Failed", "Could not import the dropped image.")
+        event.ignore()
+        return False
         
     def sizeHint(self):
         """Provide proper size hint for layout."""

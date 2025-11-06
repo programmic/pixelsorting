@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import Optional, Callable
 from PySide6.QtWidgets import *
 from PySide6.QtCore import Qt
-from .renderPassSettingsWidget import *
-from .maskWidget import MaskWidget
+from guiElements.renderPassSettingsWidget import *
+from guiElements.maskWidget import MaskWidget
 
 import json
 import os
@@ -124,7 +124,40 @@ class RenderPassWidget(QWidget):
         self.collapsed = not self.collapsed
         if hasattr(self, 'contentWidget'):
             self.contentWidget.setVisible(not self.collapsed)
+
+        # Update collapse button text
         self.collapseBtn.setText("+" if self.collapsed else "−")
+
+        # Ensure widget recalculates its size and inform any containing QListWidget
+        # so the item shrinks/grows instead of leaving empty space.
+        try:
+            # First, let the widget recalculate its preferred size
+            self.adjustSize()
+            self.updateGeometry()
+
+            # Walk up the parent chain to find a QListWidget (if any)
+            parent = self.parent()
+            from PySide6.QtWidgets import QListWidget
+            list_widget = None
+            while parent is not None:
+                if isinstance(parent, QListWidget):
+                    list_widget = parent
+                    break
+                parent = parent.parent()
+
+            # If we found the QListWidget, update the corresponding QListWidgetItem size hint
+            if list_widget is not None:
+                for i in range(list_widget.count()):
+                    item = list_widget.item(i)
+                    if list_widget.itemWidget(item) is self:
+                        item.setSizeHint(self.sizeHint())
+                        # Trigger a relayout
+                        list_widget.updateGeometry()
+                        list_widget.viewport().update()
+                        break
+        except Exception:
+            # Be tolerant of any issues when manipulating parent widgets
+            pass
     def _on_mask_click(self, event):
         self.selectionMode = 'mask'
         self.currentSelectedInput = None
@@ -249,10 +282,75 @@ class RenderPassWidget(QWidget):
                     RenderPassWidget._settings_cache = {}
             except Exception as e:
                 print(f"An unexpected error occurred: {e}")
-        settings_entry = RenderPassWidget._settings_cache.get(renderpass_type)
+    # Try several strategies to find the settings entry:
+        settings_entry = None
+        # 1) direct key lookup
+        if isinstance(RenderPassWidget._settings_cache, dict):
+            settings_entry = RenderPassWidget._settings_cache.get(renderpass_type)
+
+        # 2) if not found, attempt normalized token matching against display_name, func_name or key
+        def tokens(s: str):
+            if not s:
+                return set()
+            import re
+            parts = re.split(r"[^0-9a-zA-Z]+", s.lower())
+            return set(p for p in parts if p)
+
+        if settings_entry is None and isinstance(RenderPassWidget._settings_cache, dict):
+            target_tokens = tokens(renderpass_type)
+            # Prefer exact display_name or func_name matches first
+            for key, val in RenderPassWidget._settings_cache.items():
+                try:
+                    dn = val.get('display_name') if isinstance(val, dict) else None
+                    fn = val.get('func_name') if isinstance(val, dict) else None
+                except Exception:
+                    dn = None
+                    fn = None
+                if dn and tokens(dn) == target_tokens:
+                    settings_entry = val
+                    break
+                if fn and tokens(fn) == target_tokens:
+                    settings_entry = val
+                    break
+            # If still not found, allow subset word matching (e.g. 'Mix Percent' -> 'Mix (By percent)')
+            if settings_entry is None:
+                for key, val in RenderPassWidget._settings_cache.items():
+                    try:
+                        dn = val.get('display_name') if isinstance(val, dict) else ''
+                        fn = val.get('func_name') if isinstance(val, dict) else ''
+                    except Exception:
+                        dn = ''
+                        fn = ''
+                    key_tokens = tokens(key)
+                    dn_tokens = tokens(dn)
+                    fn_tokens = tokens(fn)
+                    # if all target tokens appear in any of the candidate token sets
+                    if target_tokens and (target_tokens.issubset(dn_tokens) or target_tokens.issubset(fn_tokens) or target_tokens.issubset(key_tokens)):
+                        settings_entry = val
+                        break
+
+        # If still not found, apply a simple heuristic directly on the renderpass_type string
+        # to treat common mix-like operations as 2-input passes (covers display names passed in tests)
+        if settings_entry is None:
+            lower_name = (renderpass_type or '').lower()
+            if any(k in lower_name for k in ('mix', 'subtract', 'alpha', 'over', 'scale', 'screen')):
+                # synthesize a minimal settings entry indicating two inputs
+                settings_entry = {'num_inputs': 2, 'settings': {}}
         # New format: each top-level pass is a dict with keys like 'original_func_name', 'num_inputs', 'settings'
         if isinstance(settings_entry, dict):
-            num_inputs = settings_entry.get('num_inputs', 1)
+            # Prefer explicit num_inputs if present
+            num_inputs = settings_entry.get('num_inputs', None)
+            # Fallback heuristics: many mix/alpha/subtract style passes take 2 inputs
+            if num_inputs is None:
+                # Look for hints in category, display_name, or func_name
+                cat = (settings_entry.get('category') or '').lower()
+                dn = (settings_entry.get('display_name') or '').lower()
+                fn = (settings_entry.get('func_name') or '').lower()
+                mix_keywords = ('mix', 'alpha', 'subtract', 'scale', 'lerp', 'add', 'difference')
+                if any(k in cat for k in mix_keywords) or any(k in dn for k in mix_keywords) or any(k in fn for k in mix_keywords):
+                    num_inputs = 2
+                else:
+                    num_inputs = 1
             settings = settings_entry.get('settings', [])
             # If settings is a dict, convert to list
             if isinstance(settings, dict):

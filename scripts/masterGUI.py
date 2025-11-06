@@ -4,7 +4,7 @@ from guiElements.preview_manager_instance import preview_manager
 import sys
 import subprocess
 from PySide6.QtWidgets import *
-from PySide6.QtCore import Qt, QThread, QTimer
+from PySide6.QtCore import Qt, QThread, QTimer, QObject, QEvent
 from superqt import QSearchableListWidget
 from utils import get_output_dir
 
@@ -19,6 +19,80 @@ import renderHook
 import json
 import os
 
+
+class SmoothScroller(QObject):
+    """Momentum-based wheel scroller.
+
+    Intercepts wheel events, converts them into an initial velocity and then
+    animates the scrollbar with friction so the list continues moving with
+    easing after the wheel stops (momentum scrolling).
+    """
+    def __init__(self, widget):
+        super().__init__(widget)
+        self.widget = widget
+        self._velocity = 0.0  # pixels per tick
+        self._timer = QTimer(self)
+        self._timer.setInterval(16)  # ~60 FPS
+        self._timer.timeout.connect(self._on_tick)
+        self._last_wheel_time = 0
+
+        # tuning parameters
+        self.sensitivity = 0.6  # converts wheel delta -> initial velocity
+        self.friction = 0.92    # per-tick multiplier; <1 to decay
+        self.stop_threshold = 0.5  # pixels per tick below which we stop
+
+    def eventFilter(self, watched, event):
+        # Only intercept wheel events targeted at the widget's viewport
+        if event.type() == QEvent.Wheel and watched is self.widget.viewport():
+            # Prefer pixelDelta (for touchpads), fall back to angleDelta
+            dy = 0
+            try:
+                pd = event.pixelDelta()
+                if pd and pd.y() != 0:
+                    dy = pd.y()
+                else:
+                    dy = event.angleDelta().y()
+            except Exception:
+                # older Qt may not expose pixelDelta in the same way
+                dy = event.angleDelta().y() if hasattr(event, 'angleDelta') else event.delta()
+
+            # Convert to pixels and invert sign so wheel up scrolls up
+            # angleDelta typically reports 120 per notch; pixelDelta may be physical pixels
+            added_velocity = dy * self.sensitivity / 8.0
+
+            # Accumulate velocity; adding more wheel movement increases speed
+            self._velocity += added_velocity
+
+            # Start the animation timer if not already running
+            if not self._timer.isActive():
+                self._timer.start()
+
+            # Accept the event to prevent default (coarse) scrolling
+            return True
+
+        return False
+
+    def _on_tick(self):
+        sb = self.widget.verticalScrollBar()
+        if abs(self._velocity) < self.stop_threshold:
+            # velocity too small -> stop and ensure final state consistent
+            self._timer.stop()
+            self._velocity = 0.0
+            return
+
+        # Apply velocity to scrollbar (subtract because positive velocity should scroll up)
+        # We use an integer step per tick
+        step = int(self._velocity)
+        if step == 0:
+            # if fractional velocity, accumulate until it becomes an int
+            # add fractional movement by keeping _velocity as float and applying it
+            sb.setValue(int(sb.value() - self._velocity))
+        else:
+            sb.setValue(sb.value() - step)
+
+        # apply friction to decay velocity
+        self._velocity *= self.friction
+
 class SearchableReorderableListWidget(QSearchableListWidget):
     """
     A searchable and reorderable list widget.
@@ -31,6 +105,16 @@ class SearchableReorderableListWidget(QSearchableListWidget):
         self.list_widget.setAcceptDrops(True)
         self.list_widget.setDragDropMode(QListWidget.InternalMove)
         self.list_widget.setDefaultDropAction(Qt.MoveAction)
+        # Use per-pixel scrolling for smooth scrolling experience
+        try:
+            from PySide6.QtWidgets import QAbstractItemView
+            self.list_widget.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+            self.list_widget.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
+        except Exception:
+            # If the view class doesn't expose ScrollPerPixel, ignore
+            pass
+        # Install an event filter for smooth pixel-scrolling fallback
+        self._smooth_installer = None
 
 
 class GUI(QWidget):
@@ -91,6 +175,14 @@ class GUI(QWidget):
         
         self.listWidget = SearchableReorderableListWidget()
         left_center.addWidget(self.listWidget, stretch=1)
+        # install smooth scroller on the inner QListWidget viewport
+        try:
+            sc = SmoothScroller(self.listWidget.list_widget)
+            self.listWidget.list_widget.viewport().installEventFilter(sc)
+            # keep reference so it isn't GC'd
+            self._list_smooth_scroller = sc
+        except Exception:
+            pass
 
         # Add progress bar and status label
         self.progress_bar = QProgressBar()
@@ -158,25 +250,34 @@ class GUI(QWidget):
         self.imported_images_list = ImportedImagesListWidget()
         self.imported_images_list.setMaximumHeight(150)
         rightSideLayout.addWidget(self.imported_images_list)
+        try:
+            sc3 = SmoothScroller(self.imported_images_list)
+            self.imported_images_list.viewport().installEventFilter(sc3)
+            self._imported_images_smooth_scroller = sc3
+        except Exception:
+            pass
 
-        # Preload a default image from assets/images for faster testing
+        # Preload all images from assets/images for faster testing and convenience
         try:
             script_dir = os.path.dirname(os.path.abspath(__file__))
             project_root = os.path.dirname(script_dir)
             images_dir = os.path.join(project_root, 'assets', 'images')
             image_files = [f for f in os.listdir(images_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tiff', '.tif', '.webp'))]
-            if image_files:
-                default_image_path = os.path.join(images_dir, random.choice(image_files))
-            else:
-                default_image_path = None
-            if os.path.exists(default_image_path):
-                from PIL import Image
-                image = Image.open(default_image_path).convert("RGB")
-                filename = os.path.basename(default_image_path)
-                self.imported_images[filename] = image
-                self.imported_images_list.addImage(filename, image)
+            # Load every image file we find into the imported images list
+            for fname in image_files:
+                try:
+                    full_path = os.path.join(images_dir, fname)
+                    if not os.path.exists(full_path):
+                        continue
+                    from PIL import Image
+                    image = Image.open(full_path).convert("RGB")
+                    self.imported_images[fname] = image
+                    self.imported_images_list.addImage(fname, image)
+                except Exception as e:
+                    # Per-file warning, don't abort loading other images
+                    print(f"[Warning] Could not load image '{fname}': {e}")
         except Exception as e:
-            print(f"[Warning] Could not preload default image: {e}")
+            print(f"[Warning] Could not preload images from assets/images: {e}")
 
         # Pass selection
         passLabel = QLabel("Available render passes:")
@@ -203,7 +304,20 @@ class GUI(QWidget):
         self.pass_display_names = [v.get('display_name', k) for k, v in self.render_passes_config.items()]
         self.passList.addItems(self.pass_display_names)
         self.passList.setFixedWidth(200)
+        # Use per-pixel scrolling for smoother UX
+        try:
+            from PySide6.QtWidgets import QAbstractItemView
+            self.passList.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+            self.passList.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
+        except Exception:
+            pass
         rightSideLayout.addWidget(self.passList)
+        try:
+            sc2 = SmoothScroller(self.passList)
+            self.passList.viewport().installEventFilter(sc2)
+            self._pass_smooth_scroller = sc2
+        except Exception:
+            pass
 
         main_layout.addLayout(rightSideLayout)
 
@@ -228,171 +342,13 @@ class GUI(QWidget):
             widget = lw.itemWidget(lw.item(i))
             if widget and hasattr(widget, 'collapsed') and widget.collapsed:
                 widget.toggle_collapsed()
-        
-        # Setup render thread and worker
-        self.render_thread = None
-        self.render_worker = None
 
-        # Load renderPasses.json to get available passes
+        # Refresh geometry and usage state
         try:
-            # Get the directory where this script is located
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            # Go up one level to project root
-            project_root = os.path.dirname(script_dir)
-            json_path = os.path.join(project_root, 'renderPasses.json')
-            with open(json_path, 'r', encoding='utf-8') as f:
-                self.render_passes_config = json.load(f)
-                print(f"Successfully loaded {len(self.render_passes_config)} render passes from JSON")
-        except Exception as e:
-            print(f"Error loading renderPasses.json: {e}")
-            self.render_passes_config = {}
-
-        main_layout = QHBoxLayout(self)
-        
-        # Left side with slot table and status bar
-        left_center = QVBoxLayout()
-        
-        # Slot table
-        self.slotTable = ModernSlotTableWidget(self.available_slots)
-        left_center.addWidget(self.slotTable)
-        
-        # Status bar for feedback
-        self.status_bar = QLabel()
-        self.status_bar.setStyleSheet("color: #666; padding: 5px;")
-        left_center.addWidget(self.status_bar)
-        
-        def show_message(self, message):
-            """Display a message in the status bar."""
-            self.status_bar.setText(message)
-            print(message)  # Also print to console for debugging
-        
-        self.show_message = show_message.__get__(self)
-        
-        self.listWidget = SearchableReorderableListWidget()
-        left_center.addWidget(self.listWidget, stretch=1)
-
-        # Add progress bar and status label
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setMinimum(0)
-        self.progress_bar.setMaximum(0)  # Indeterminate progress
-        self.progress_bar.hide()
-        left_center.addWidget(self.progress_bar)
-        
-        self.status_label = QLabel()
-        self.status_label.hide()
-        left_center.addWidget(self.status_label)
-        
-        # Add Run Rendering and Output Folder buttons
-        button_layout = QHBoxLayout()
-        
-        self.run_button = QPushButton("Run Rendering")
-        self.run_button.clicked.connect(self.runRendering)
-        button_layout.addWidget(self.run_button)
-        
-        self.open_output_button = QPushButton("Open Output Folder")
-        self.open_output_button.clicked.connect(self.openOutputFolder)
-        button_layout.addWidget(self.open_output_button)
-        
-        left_center.addLayout(button_layout)
-
-        # Add Save/Load buttons
-        button_layout = QHBoxLayout()
-        self.save_button = QPushButton("Save Project")
-        self.save_button.clicked.connect(self.saveProject)
-        button_layout.addWidget(self.save_button)
-        
-        self.load_button = QPushButton("Load Project")
-        self.load_button.clicked.connect(self.loadProject)
-        button_layout.addWidget(self.load_button)
-        
-        left_center.addLayout(button_layout)
-
-        main_layout.addLayout(left_center, stretch=1)
-        
-        # Right side with tools
-        rightSideLayout = QVBoxLayout()
-        rightSideLayout.setSpacing(10)
-
-        # Select Image Section
-        self.selectImageButton = QPushButton("Select Image")
-        self.selectImageButton.setStyleSheet("""
-            QPushButton {
-                padding: 8px;
-                background: #4CAF50;
-                color: white;
-                border: none;
-                border-radius: 4px;
-            }
-            QPushButton:hover {
-                background: #45a049;
-            }
-        """)
-        self.selectImageButton.clicked.connect(self.select_image)
-        rightSideLayout.addWidget(self.selectImageButton)
-
-        # Imported Images List
-        importLabel = QLabel("Imported Images:")
-        importLabel.setStyleSheet("font-weight: bold; margin-top: 10px;")
-        rightSideLayout.addWidget(importLabel)
-        self.imported_images_list = ImportedImagesListWidget()
-        self.imported_images_list.setMaximumHeight(150)
-        rightSideLayout.addWidget(self.imported_images_list)
-
-        # Preload a default image from assets/images for faster testing
-        try:
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            project_root = os.path.dirname(script_dir)
-            images_dir = os.path.join(project_root, 'assets', 'images')
-            image_files = [f for f in os.listdir(images_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tiff', '.tif', '.webp'))]
-            if image_files:
-                default_image_path = os.path.join(images_dir, random.choice(image_files))
-            else:
-                default_image_path = None
-            if os.path.exists(default_image_path):
-                from PIL import Image
-                image = Image.open(default_image_path).convert("RGB")
-                filename = os.path.basename(default_image_path)
-                self.imported_images[filename] = image
-                self.imported_images_list.addImage(filename, image)
-        except Exception as e:
-            print(f"[Warning] Could not preload default image: {e}")
-
-        # Pass selection
-        passLabel = QLabel("Available render passes:")
-        passLabel.setStyleSheet("font-weight: bold; margin-top: 10px;")
-        rightSideLayout.addWidget(passLabel)
-        self.passList = QListWidget()
-        self.passList.setStyleSheet("""
-            QListWidget {
-                border: 1px solid #ccc;
-                border-radius: 4px;
-            }
-            QListWidget::item {
-                padding: 4px;
-            }
-            QListWidget::item:hover {
-                background: #f0f0f0;
-            }
-            QListWidget::item:selected {
-                background: #e0e0e0;
-                color: black;
-            }
-        """)
-        self.pass_display_names = list(self.render_passes_config.keys())
-        self.passList.addItems(self.pass_display_names)
-        self.passList.setFixedWidth(200)
-        rightSideLayout.addWidget(self.passList)
-
-        main_layout.addLayout(rightSideLayout)
-
-        self.passList.itemClicked.connect(self.on_pass_selected)
-        self.slotTable.slot_clicked.connect(self.onSlotClicked)
-        
-        # Connect context menu signals
-        self.slotTable.context_menu.slot_learn_requested.connect(self.onSlotLearnRequested)
-        self.slotTable.context_menu.slot_clear_requested.connect(self.onSlotClearRequested)
-        self.slotTable.context_menu.slot_preview_requested.connect(self.onSlotPreviewRequested)
-        
+            lw.updateGeometry()
+            lw.viewport().update()
+        except Exception:
+            pass
         self.updateSlotUsage()
 
     def on_pass_selected(self, item: QListWidgetItem):
@@ -433,7 +389,7 @@ class GUI(QWidget):
         for i in range(lw.count()):
             item = lw.item(i)
             if lw.itemWidget(item) == widget:
-                # Entferne das Item aus der QListWidget und lösche es sauber
+                # Deletes the Item from the QListWidget and neatly deletes it
                 lw.takeItem(i)
                 widget.setParent(None)
                 widget.deleteLater()
@@ -513,6 +469,8 @@ class GUI(QWidget):
                 mask = widget.maskWidget.get_values()
                 if mask.get("enabled") and mask.get("slot") in self.slotUsage:
                     self.slotUsage[mask.get("slot")] = True
+                    # Pass mask data to the render pipeline
+                    self.renderPipeline.setMaskData(mask.get("mask_data"))
             except Exception:
                 pass
 

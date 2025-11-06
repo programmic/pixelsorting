@@ -5,7 +5,7 @@ Test script to verify the alpha_over function fix
 
 from PIL import Image
 import numpy as np
-from scripts.passes import alpha_over
+from passes import alpha_over
 
 def create_test_images():
     """Create test images for alpha over testing"""

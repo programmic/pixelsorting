@@ -259,7 +259,7 @@ class RenderPassSettingsWidget(QWidget):
 
             # --- Support for image_input (mask) using slot system ---
             try:
-                from scripts.enums import ControlType
+                from enums import ControlType
             except Exception:
                 import importlib.util, os
                 spec = importlib.util.spec_from_file_location("enums", os.path.join(os.path.dirname(__file__), "..", "enums.py"))
@@ -504,7 +504,12 @@ class RenderPassSettingsWidget(QWidget):
                     handler = make_toggle_handler(label_text, setting)
                     toggle.toggled.connect(handler)
                     toggle._handler_ref = handler  # keep a strong reference
-                    print(f"[DEBUG] Connected 'toggled(bool)' for {label_text}, receivers={toggle.receivers(toggle.toggled)}")
+                    # QObject.receivers expects a string signal signature on PySide6
+                    try:
+                        recv = toggle.receivers('toggled(bool)')
+                    except Exception:
+                        recv = 'unknown'
+                    print(f"[DEBUG] Connected 'toggled(bool)' for {label_text}, receivers={recv}")
                 else:
                     print(f"[DEBUG] WARNING: toggle has no 'toggled' signal for {label_text}")
                 # ...existing code...
@@ -989,7 +994,7 @@ class RenderPassSettingsWidget(QWidget):
     def get_slot_enum(self, control_key: str):
         """Return the selected slot as a Slot enum, or None if not set or not convertible."""
         try:
-            from scripts.enums import Slot
+            from enums import Slot
         except Exception:
             import importlib.util, os
             spec = importlib.util.spec_from_file_location("enums", os.path.join(os.path.dirname(__file__), "..", "enums.py"))

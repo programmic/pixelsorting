@@ -111,6 +111,31 @@ class TestPasses(ImageTestCase):
         out = passes.sort(img, mode='lum', flip_dir=False, rotate=False, mask=None)
         self.assertEqual(out.size, img.size)
 
+    def test_sort_with_mask(self):
+        # Create a 5x5 image with a gradient
+        img = Image.new('RGB', (5, 5), (0, 0, 0))
+        for x in range(5):
+            for y in range(5):
+                img.putpixel((x, y), (x * 50, y * 50, 0))
+
+        # Create a mask with a diagonal line
+        mask = Image.new('RGB', (5, 5), (0, 0, 0))
+        for i in range(5):
+            mask.putpixel((i, i), (255, 255, 255))
+
+        # Apply the sort function with the mask
+        out = passes.sort(img, mode='lum', flip_dir=False, rotate=False, mask=mask)
+
+        # Verify that only the diagonal pixels are sorted
+        for i in range(5):
+            self.assertEqual(out.getpixel((i, i)), (i * 50, i * 50, 0))
+
+        # Verify that other pixels remain unchanged
+        for x in range(5):
+            for y in range(5):
+                if x != y:
+                    self.assertEqual(out.getpixel((x, y)), (x * 50, y * 50, 0))
+
 
 if __name__ == '__main__':
     unittest.main()

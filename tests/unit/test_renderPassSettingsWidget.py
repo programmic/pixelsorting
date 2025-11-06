@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QApplication
 from PySide6.QtTest import QTest
 from PySide6.QtCore import Qt
 
-from scripts.guiElements.renderPassSettingsWidget import RenderPassSettingsWidget
+from guiElements.renderPassSettingsWidget import RenderPassSettingsWidget
 
 
 class TestRenderPassSettingsWidget(unittest.TestCase):

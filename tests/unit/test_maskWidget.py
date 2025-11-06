@@ -1,6 +1,6 @@
 import unittest
 from PySide6.QtWidgets import QApplication
-from scripts.guiElements.maskWidget import MaskWidget
+from guiElements.maskWidget import MaskWidget
 
 class TestMaskWidget(unittest.TestCase):
     """Test cases for MaskWidget class"""

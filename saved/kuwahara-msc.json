@@ -1,0 +1,51 @@
+{
+  "render_passes": [
+    {
+      "type": "meanShiftClusteringGPU",
+      "settings": {},
+      "output_slot": "slot1",
+      "alias_to_param": {}
+    },
+    {
+      "type": "kuwahara_wrapper",
+      "settings": {},
+      "output_slot": "slot15",
+      "alias_to_param": {}
+    }
+  ],
+  "slot_images": {
+    "slot0": "image_data_placeholder",
+    "slot1": "image_data_placeholder"
+  },
+  "slot_usage": {
+    "slot0": true,
+    "slot1": true,
+    "slot2": false,
+    "slot3": false,
+    "slot4": false,
+    "slot5": false,
+    "slot6": false,
+    "slot7": false,
+    "slot8": false,
+    "slot9": false,
+    "slot10": false,
+    "slot11": false,
+    "slot12": false,
+    "slot13": false,
+    "slot14": false,
+    "slot15": true
+  },
+  "slot_bindings": {
+    "slot1": {
+      "destination": [
+        "meanShiftClusteringGPU"
+      ]
+    },
+    "slot15": {
+      "source": "kuwahara_wrapper Pass\nInputs: slot1",
+      "destination": [
+        "kuwahara_wrapper"
+      ]
+    }
+  }
+}

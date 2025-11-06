@@ -8,7 +8,7 @@ sys.path.insert(0, project_root)
 
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt
-from scripts.guiElements.renderPassWidget import RenderPassWidget
+from guiElements.renderPassWidget import RenderPassWidget
 
 class TestRenderPassWidget(unittest.TestCase):
     """Test cases for RenderPassWidget class"""
