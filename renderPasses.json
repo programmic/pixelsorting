@@ -289,22 +289,33 @@
     "settings": {
       "num_colors": {
         "name": "num_colors",
-        "label": "Amount of Colors",
+        "label": "Colors (Count)",
         "type": "int",
         "min": 3.0,
         "max": 512.0,
-        "default": 9.0
+        "default": 3.0
       },
       "method": {
         "name": "method",
-        "label": "Dithering Algorithm",
+        "label": "Method of dithering",
         "type": "str",
         "options": [
-          "none",
           "floyd_steinberg",
           "atkinson"
         ],
-        "default": "none",
+        "default": "floyd_steinberg",
+        "ui_type": "radio"
+      },
+      "palette_selection": {
+        "name": "palette_selection",
+        "label": "Palette",
+        "type": "str",
+        "options": [
+          "median_cut",
+          "frequent",
+          "diverse"
+        ],
+        "default": "median_cut",
         "ui_type": "dropdown"
       }
     }
@@ -327,7 +338,7 @@
   "reduce_size": {
     "func_name": "reduce_size",
     "display_name": "Downscale",
-    "category": "",
+    "category": "Modify",
     "settings": {
       "resolution": {
         "name": "resolution",

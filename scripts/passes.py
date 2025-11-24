@@ -1531,16 +1531,30 @@ class DitherMethods(Enum):
     ATKINSON = 2
 
 def dither(
-        img: Image.Image,
-        num_colors: int,
-        method: DitherMethods | str
+    img: Image.Image,
+    num_colors: int,
+    method: DitherMethods | str,
+    palette_selection: str = "median_cut",
 ) -> Image.Image:
+    """Apply dithering and reduce colors.
+
+    New parameter `palette_selection` controls how the final palette is
+    chosen when converting to `num_colors` colors:
+      - "median_cut": use PIL's median cut quantizer (default, preserves
+        previous behaviour)
+      - "most_represented": choose the `num_colors` most frequent colors
+        in the (error-diffused) image
+      - "most_different": choose `num_colors` colors that are maximally
+        different (farthest-point sampling on unique colors)
+    """
+
     if not 2 < num_colors <= 256:
         raise ValueError("Number of colors must be at least 3 and at most 256")
+
     if method == DitherMethods.NONE:
         print("No dithering applied, no dither method specified; returning original image.")
         return img
-    
+
     if isinstance(method, str):
         method = method.upper()
         if method.lower() == "floyd_steinberg":
@@ -1558,27 +1572,78 @@ def dither(
     elif method == DitherMethods.ATKINSON:
         img_np = __dither_atkinson(img_np, num_colors)
 
-    # Convert to PIL image then quantize to ensure the resulting image
-    # contains at most `num_colors` distinct colors. The error-diffusion
-    # steps above operate per-channel and can produce many colors; using
-    # PIL's quantize enforces a global palette of the requested size.
+    # Convert to PIL image (clipped) for potential fallback and for the
+    # median-cut path below.
     result_img = Image.fromarray(np.clip(img_np, 0, 255).astype(np.uint8), 'RGB')
-    try:
-        # Use MEDIANCUT (default) to build an adaptive palette. For
-        # Floyd-Steinberg we enable dithering in quantize; for Atkinson
-        # the algorithm above approximates error diffusion so disable
-        # additional dithering during quantize.
-        if method == DitherMethods.FLOYD_STEINBERG:
-            qimg = result_img.quantize(colors=num_colors, method=Image.MEDIANCUT, dither=Image.FLOYDSTEINBERG)
-        else:
-            qimg = result_img.quantize(colors=num_colors, method=Image.MEDIANCUT, dither=Image.NONE)
 
-        # Convert back to RGB for consistent return type
-        return qimg.convert('RGB')
-    except Exception:
-        # If quantize is unavailable for any reason, fall back to the
-        # non-quantized result (better than raising here).
-        return result_img
+    # Helper: select the most represented colors from the image
+    def _select_most_represented(pixels: np.ndarray, k: int) -> np.ndarray:
+        # pixels: (H,W,3) uint8
+        flat = pixels.reshape(-1, 3).astype(np.uint8)
+        uniq, counts = np.unique(flat.reshape(-1, 3), axis=0, return_counts=True)
+        idx = np.argsort(counts)[::-1]
+        chosen = uniq[idx[:k]]
+        return chosen.astype(np.uint8)
+
+    # Helper: farthest-first (greedy) selection to maximize palette diversity
+    def _select_most_different(pixels: np.ndarray, k: int) -> np.ndarray:
+        flat = pixels.reshape(-1, 3).astype(np.float32)
+        # unique colors to reduce work
+        uniq = np.unique(flat.reshape(-1, 3), axis=0).astype(np.float32)
+        if uniq.shape[0] <= k:
+            return uniq.astype(np.uint8)
+
+        # start with the color farthest from the mean (deterministic)
+        mean = uniq.mean(axis=0)
+        # use luminance-weighted distance so diversity prefers perceptual differences
+        weights = np.array([0.299, 0.587, 0.114], dtype=np.float32)
+        d0 = np.sum(((uniq - mean[None, :]) * weights[None, :]) ** 2, axis=1)
+        centers = [uniq[np.argmax(d0)]]
+
+        # Greedy farthest point sampling
+        for _ in range(1, k):
+            # compute luminance-weighted squared distances to current centers
+            diffs = (uniq[:, None, :] - np.array(centers)[None, :, :]) * weights[None, None, :]
+            dists = np.sum(diffs ** 2, axis=2)
+            min_d = dists.min(axis=1)
+            next_idx = np.argmax(min_d)
+            centers.append(uniq[next_idx])
+
+        return np.array(centers, dtype=np.uint8)
+
+    # Palette selection and remapping
+    ps = palette_selection.lower() if isinstance(palette_selection, str) else str(palette_selection)
+    if ps == "median_cut":
+        try:
+            if method == DitherMethods.FLOYD_STEINBERG:
+                qimg = result_img.quantize(colors=num_colors, method=Image.MEDIANCUT, dither=Image.FLOYDSTEINBERG)
+            else:
+                qimg = result_img.quantize(colors=num_colors, method=Image.MEDIANCUT, dither=Image.NONE)
+            return qimg.convert('RGB')
+        except Exception:
+            return result_img
+
+    # For the custom palette selection methods we work on the error-diffused
+    # image array and map each pixel to the nearest palette color.
+    img_uint8 = np.clip(img_np, 0, 255).astype(np.uint8)
+    if ps in ("most_represented", "represented", "frequent"):
+        centers = _select_most_represented(img_uint8, num_colors)
+    elif ps in ("most_different", "different", "diverse", "farthest"):
+        centers = _select_most_different(img_uint8, num_colors)
+    else:
+        raise ValueError(f"Unknown palette_selection: {palette_selection}")
+
+    # Map every pixel to nearest center using luminance-weighted distance
+    h, w = img_uint8.shape[:2]
+    pixels = img_uint8.reshape(-1, 3).astype(np.int16)
+    centers_i = centers.astype(np.int16)
+    weights = np.array([0.299, 0.587, 0.114], dtype=np.float32)
+    diffs = (pixels[:, None, :].astype(np.float32) - centers_i[None, :, :].astype(np.float32)) * weights[None, None, :]
+    dists = np.sum(diffs ** 2, axis=2)
+    labels = np.argmin(dists, axis=1)
+    quant_pixels = centers_i[labels].astype(np.uint8).reshape((h, w, 3))
+
+    return Image.fromarray(quant_pixels, 'RGB')
 
 def __dither_floyd_steinberg(img_np: np.ndarray, num_colors: int) -> np.ndarray:
     height, width, channels = img_np.shape
