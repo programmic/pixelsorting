@@ -18,10 +18,10 @@ import numpy as np
 import pyopencl as cl
 from PIL import Image
 from tqdm import tqdm
+from enum import Enum
 
 import converters as converters
 from timing import timing
-
 
 def ensure_rgba(img: Image.Image) -> Image.Image: #globalignore
     """Ensure image is in RGBA mode, preserving alpha if present."""
@@ -37,7 +37,6 @@ def ensure_rgba(img: Image.Image) -> Image.Image: #globalignore
     else:
         # Handle other modes
         return img.convert('RGBA')
-
 
 def get_pixel_rgba(pixel: Union[int, Tuple[int, ...]]) -> Tuple[int, int, int, int]: #globalignore
     """Get RGBA values from pixel, handling different modes."""
@@ -55,7 +54,6 @@ def get_pixel_rgba(pixel: Union[int, Tuple[int, ...]]) -> Tuple[int, int, int, i
         # Fallback
         return (0, 0, 0, 255)
 
-
 def put_pixel_rgba(img: Image.Image, x: int, y: int, rgba: Tuple[int, int, int, int]) -> None: #globalignore
     """Put RGBA pixel, handling different image modes."""
     mode = img.mode
@@ -71,7 +69,6 @@ def put_pixel_rgba(img: Image.Image, x: int, y: int, rgba: Tuple[int, int, int, 
     else:
         img.putpixel((x, y), rgba[:3])
 
-
 @contextlib.contextmanager
 def suppress_output(): #globalignore
     with open(os.devnull, 'w') as devnull:
@@ -84,7 +81,6 @@ def suppress_output(): #globalignore
         finally:
             sys.stdout = old_stdout
             sys.stderr = old_stderr
-
 
 def scale_image(img: Image.Image, copyImage: Image.Image, downscale: float = 0) -> Image.Image:  #globalignore
     if not 0 <= downscale <= 100: raise ValueError("ScaleImageError: Unsupported downscale value")
@@ -282,11 +278,12 @@ def wrap_sort(img: Image.Image,
     # Create mask based on vSplitting if needed
     mask = None
     
-    # Call the actual sort function with translated parameters
-    return sort(img, mode, flip_dir=flip_dir, rotate=rotate_bool, mask=mask)
+    # Call the actual sort function with translated parameters, including vSplitting
+    return sort(img, mode, vSplitting=vSplitting, flip_dir=flip_dir, rotate=rotate_bool, mask=mask)
 
 def sort(img: Image.Image,
          mode: str = "lum",
+         vSplitting: bool = True,
          flip_dir: bool = False,
          rotate: bool = True,
          mask: Optional[Image.Image] = None
@@ -303,6 +300,14 @@ def sort(img: Image.Image,
         # Create a white mask for the whole image if no mask provided
         mask = Image.new("RGB", img.size, (255, 255, 255))
         chunks = get_coherent_image_chunks(mask, rotate)
+    # If vertical splitting requested, break chunks into vertical runs
+    if vSplitting:
+        try:
+            v_chunks = to_vertical_chunks(chunks)
+            chunks = split_connected_chunks(v_chunks)
+        except Exception:
+            # In case of any issue with splitting, fall back to original chunks
+            pass
     # Do not show the mask during processing (avoids popping GUI windows during
     # automated runs/tests). If you need to debug visually, enable explicitly.
     
@@ -329,7 +334,11 @@ def sort(img: Image.Image,
 
         # Sort the chunk based on the selected mode
         if mode == "lum":
-            chunk_pixels.sort(key=lambda px: sum(px[:3]) / 3)  # Average luminance
+            # Use the project's luminance helper for perceptual luminance
+            try:
+                chunk_pixels.sort(key=lambda px: converters.get_luminance(px))
+            except Exception:
+                chunk_pixels.sort(key=lambda px: sum(px[:3]) / 3)
         elif mode == "hue":
             chunk_pixels.sort(key=lambda px: colorsys.rgb_to_hsv(*px[:3])[0])
         elif mode == "r":
@@ -732,7 +741,6 @@ def __process_rows(y_start, y_end, padded_gray, padded_img, kernel, height, widt
 
     return result
 
-
 def kuwahara_wrapper(
         img: Image.Image,
         kernel: int,
@@ -747,7 +755,6 @@ def kuwahara_wrapper(
         else: return anisotropic_kuwahara_gpu(img, kernel, regions)
     else:
         return kuwahara_gpu(img, kernel)
-
 
 def kuwahara(img: Image.Image, kernel: int, num_threads: int = None) -> Image.Image: #globalignore
     if num_threads is None:
@@ -780,8 +787,6 @@ def kuwahara(img: Image.Image, kernel: int, num_threads: int = None) -> Image.Im
 
     out = np.clip(out, 0, 255).astype(np.uint8)
     return Image.fromarray(out)
-
-
 
 def kuwahara_gpu(img: Image.Image, kernel_size: float) -> Image.Image: #globalignore
     """
@@ -894,7 +899,6 @@ def anisotropic_kuwahara_gpu(img: Image.Image, kernel_size: float, regions: int 
     except Exception as e:
         print(f"OpenCL error: {str(e)}. Falling back to CPU implementation.")
         return _cpu_fallback(img, kernel_size, regions)
-
 
 def anisotropic_kuwahara_papari_gpu( #globalignore
     img: Image.Image,
@@ -1230,9 +1234,13 @@ def alpha_over(img1: Image.Image, img2: Image.Image) -> Image.Image:
             print(f"Image size mismatch: {img1_rgba.size} vs {img2_rgba.size}. Resizing foreground image.")
             img2_rgba = img2_rgba.resize(img1_rgba.size, Image.Resampling.LANCZOS)
         
-        # Perform alpha compositing using PIL's built-in method
-        # The alpha_composite method composites img2 over img1 using alpha transparency
-        result = Image.alpha_composite(img1_rgba, img2_rgba)
+        # Perform manual alpha over compositing
+        result = Image.new("RGBA", img1_rgba.size)
+        for y in range(result.size[1]):
+            for x in range(result.size[0]):
+                r, g, b, a = result.getpixel((x, y))
+                if a == 0:
+                    result.putpixel((x, y), (0, 0, 0, 0))
         
         return result
         
@@ -1459,7 +1467,6 @@ def meanShiftCluster(
     out_np = out_np.astype(np.uint8)
     return Image.fromarray(out_np, mode='RGB')
 
-
 def meanShiftClusteringGPU(
         img: Image.Image,
         spatial_radius: int = 5,
@@ -1522,8 +1529,6 @@ def meanShiftClusteringGPU(
     except Exception as e:
         print(f"OpenCL error: {str(e)}. Falling back to CPU implementation.")
         return _cpu_fallback(img, spatial_radius, color_radius, max_iter)
-    
-from enum import Enum
 
 class DitherMethods(Enum):
     NONE = 0
@@ -1535,6 +1540,7 @@ def dither(
     num_colors: int,
     method: DitherMethods | str,
     palette_selection: str = "median_cut",
+    palette: Optional[list] = None,
 ) -> Image.Image:
     """Apply dithering and reduce colors.
 
@@ -1567,14 +1573,14 @@ def dither(
     img = img.convert("RGB")
     img_np = np.array(img).astype(np.float32)
 
-    if method == DitherMethods.FLOYD_STEINBERG:
-        img_np = __dither_floyd_steinberg(img_np, num_colors)
-    elif method == DitherMethods.ATKINSON:
-        img_np = __dither_atkinson(img_np, num_colors)
+    # We'll perform error-diffusion after we compute/decide on the palette
+    # (so palette-aware diffusion can map to the chosen colors). Build a
+    # uint8 snapshot for palette selection steps below.
+    img_uint8 = np.clip(img_np, 0, 255).astype(np.uint8)
 
     # Convert to PIL image (clipped) for potential fallback and for the
     # median-cut path below.
-    result_img = Image.fromarray(np.clip(img_np, 0, 255).astype(np.uint8), 'RGB')
+    result_img = Image.fromarray(img_uint8, 'RGB')
 
     # Helper: select the most represented colors from the image
     def _select_most_represented(pixels: np.ndarray, k: int) -> np.ndarray:
@@ -1611,29 +1617,67 @@ def dither(
 
         return np.array(centers, dtype=np.uint8)
 
-    # Palette selection and remapping
+    # Palette selection: determine centers (palette colors) unless we
+    # will use PIL's median-cut quantizer which handles both palette and
+    # optional dithering itself.
     ps = palette_selection.lower() if isinstance(palette_selection, str) else str(palette_selection)
+
+    centers = None
+    if palette is not None:
+        # normalize palette into an (N,3) uint8 array
+        def _hex_to_rgb(h: str) -> tuple:
+            h = h.lstrip('#')
+            if len(h) == 3:
+                h = ''.join([c*2 for c in h])
+            return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+
+        parsed = []
+        for p in palette:
+            if isinstance(p, str):
+                parsed.append(_hex_to_rgb(p))
+            elif isinstance(p, (list, tuple)) and len(p) >= 3:
+                parsed.append((int(p[0]), int(p[1]), int(p[2])))
+            else:
+                raise ValueError(f"Invalid palette entry: {p}")
+        centers = np.array(parsed, dtype=np.uint8)
+        # Truncate if too long; do not override requested num_colors
+        if centers.shape[0] > num_colors:
+            centers = centers[:num_colors]
+
+    # If we are using median_cut, delegate to PIL (it supports dithering)
     if ps == "median_cut":
         try:
-            if method == DitherMethods.FLOYD_STEINBERG:
-                qimg = result_img.quantize(colors=num_colors, method=Image.MEDIANCUT, dither=Image.FLOYDSTEINBERG)
-            else:
-                qimg = result_img.quantize(colors=num_colors, method=Image.MEDIANCUT, dither=Image.NONE)
+            dither_flag = Image.FLOYDSTEINBERG if method == DitherMethods.FLOYD_STEINBERG else Image.NONE
+            qimg = result_img.quantize(colors=num_colors, method=Image.MEDIANCUT, dither=dither_flag)
             return qimg.convert('RGB')
         except Exception:
             return result_img
 
-    # For the custom palette selection methods we work on the error-diffused
-    # image array and map each pixel to the nearest palette color.
+    # If centers still None, compute according to palette_selection
     img_uint8 = np.clip(img_np, 0, 255).astype(np.uint8)
-    if ps in ("most_represented", "represented", "frequent"):
-        centers = _select_most_represented(img_uint8, num_colors)
-    elif ps in ("most_different", "different", "diverse", "farthest"):
-        centers = _select_most_different(img_uint8, num_colors)
-    else:
-        raise ValueError(f"Unknown palette_selection: {palette_selection}")
+    if centers is None:
+        if ps in ("most_represented", "represented", "frequent"):
+            centers = _select_most_represented(img_uint8, num_colors)
+        elif ps in ("most_different", "different", "diverse", "farthest"):
+            centers = _select_most_different(img_uint8, num_colors)
+        else:
+            raise ValueError(f"Unknown palette_selection: {palette_selection}")
 
-    # Map every pixel to nearest center using luminance-weighted distance
+    # Ensure centers has at most num_colors entries
+    if centers is not None and centers.shape[0] > num_colors:
+        centers = centers[:num_colors]
+
+    # Now perform dithering. If using an error-diffusion method, run the
+    # palette-aware diffusion which maps pixels to the nearest center
+    # during scanning and diffuses the resulting error.
+    if method == DitherMethods.FLOYD_STEINBERG:
+        out_np = __dither_floyd_steinberg(img_np.copy(), num_colors, centers)
+        return Image.fromarray(out_np, 'RGB')
+    elif method == DitherMethods.ATKINSON:
+        out_np = __dither_atkinson(img_np.copy(), num_colors, centers)
+        return Image.fromarray(out_np, 'RGB')
+
+    # Fallback: simple nearest-center mapping (no error diffusion)
     h, w = img_uint8.shape[:2]
     pixels = img_uint8.reshape(-1, 3).astype(np.int16)
     centers_i = centers.astype(np.int16)
@@ -1645,53 +1689,110 @@ def dither(
 
     return Image.fromarray(quant_pixels, 'RGB')
 
-def __dither_floyd_steinberg(img_np: np.ndarray, num_colors: int) -> np.ndarray:
+def __dither_floyd_steinberg(img_np: np.ndarray, num_colors: int, centers: Optional[np.ndarray] = None) -> np.ndarray:
     height, width, channels = img_np.shape
-    quantization_level = 256 // num_colors
 
+    if centers is None:
+        quantization_level = 256 // max(1, num_colors)
+        for y in range(height):
+            for x in range(width):
+                old_pixel = img_np[y, x].copy()
+                new_pixel = np.round(old_pixel / quantization_level) * quantization_level
+                img_np[y, x] = new_pixel
+                error = old_pixel - new_pixel
+
+                if x + 1 < width:
+                    img_np[y, x + 1] += error * 7 / 16
+                if x - 1 >= 0 and y + 1 < height:
+                    img_np[y + 1, x - 1] += error * 3 / 16
+                if y + 1 < height:
+                    img_np[y + 1, x] += error * 5 / 16
+                if x + 1 < width and y + 1 < height:
+                    img_np[y + 1, x + 1] += error * 1 / 16
+
+        return np.clip(img_np, 0, 255).astype(np.uint8)
+
+    # Palette-aware diffusion: map pixels to nearest center using
+    # luminance-weighted distance, then diffuse the error.
+    centers_f = centers.astype(np.float32)
+    weights = np.array([0.299, 0.587, 0.114], dtype=np.float32)
+    img = img_np.copy()
     for y in range(height):
         for x in range(width):
-            old_pixel = img_np[y, x].copy()
-            new_pixel = np.round(old_pixel / quantization_level) * quantization_level
-            img_np[y, x] = new_pixel
+            old_pixel = img[y, x].copy()
+            diffs = (old_pixel[None, :] - centers_f) * weights[None, :]
+            dists = np.sum(diffs * diffs, axis=1)
+            idx = int(np.argmin(dists))
+            new_pixel = centers_f[idx]
+            img[y, x] = new_pixel
             error = old_pixel - new_pixel
 
             if x + 1 < width:
-                img_np[y, x + 1] += error * 7 / 16
+                img[y, x + 1] += error * 7 / 16
             if x - 1 >= 0 and y + 1 < height:
-                img_np[y + 1, x - 1] += error * 3 / 16
+                img[y + 1, x - 1] += error * 3 / 16
             if y + 1 < height:
-                img_np[y + 1, x] += error * 5 / 16
+                img[y + 1, x] += error * 5 / 16
             if x + 1 < width and y + 1 < height:
-                img_np[y + 1, x + 1] += error * 1 / 16
+                img[y + 1, x + 1] += error * 1 / 16
 
-    return np.clip(img_np, 0, 255).astype(np.uint8)
+    return np.clip(img, 0, 255).astype(np.uint8)
 
-def __dither_atkinson(img_np: np.ndarray, num_colors: int) -> np.ndarray:
+def __dither_atkinson(img_np: np.ndarray, num_colors: int, centers: Optional[np.ndarray] = None) -> np.ndarray:
     height, width, _ = img_np.shape
-    quantization_level = 256 // num_colors
 
+    if centers is None:
+        quantization_level = 256 // max(1, num_colors)
+        for y in range(height):
+            for x in range(width):
+                old_pixel = img_np[y, x].copy()
+                new_pixel = np.round(old_pixel / quantization_level) * quantization_level
+                img_np[y, x] = new_pixel
+                error = old_pixel - new_pixel
+
+                if x + 1 < width:
+                    img_np[y, x + 1] += error * 1 / 8
+                if x + 2 < width:
+                    img_np[y, x + 2] += error * 1 / 8
+                if x - 1 >= 0 and y + 1 < height:
+                    img_np[y + 1, x - 1] += error * 1 / 8
+                if y + 1 < height:
+                    img_np[y + 1, x] += error * 1 / 8
+                if x + 1 < width and y + 1 < height:
+                    img_np[y + 1, x + 1] += error * 1 / 8
+                if y + 2 < height:
+                    img_np[y + 2, x] += error * 1 / 8
+
+        return np.clip(img_np, 0, 255).astype(np.uint8)
+
+    # Palette-aware Atkinson diffusion
+    centers_f = centers.astype(np.float32)
+    weights = np.array([0.299, 0.587, 0.114], dtype=np.float32)
+    img = img_np.copy()
     for y in range(height):
         for x in range(width):
-            old_pixel = img_np[y, x].copy()
-            new_pixel = np.round(old_pixel / quantization_level) * quantization_level
-            img_np[y, x] = new_pixel
+            old_pixel = img[y, x].copy()
+            diffs = (old_pixel[None, :] - centers_f) * weights[None, :]
+            dists = np.sum(diffs * diffs, axis=1)
+            idx = int(np.argmin(dists))
+            new_pixel = centers_f[idx]
+            img[y, x] = new_pixel
             error = old_pixel - new_pixel
 
             if x + 1 < width:
-                img_np[y, x + 1] += error * 1 / 8
+                img[y, x + 1] += error * 1 / 8
             if x + 2 < width:
-                img_np[y, x + 2] += error * 1 / 8
+                img[y, x + 2] += error * 1 / 8
             if x - 1 >= 0 and y + 1 < height:
-                img_np[y + 1, x - 1] += error * 1 / 8
+                img[y + 1, x - 1] += error * 1 / 8
             if y + 1 < height:
-                img_np[y + 1, x] += error * 1 / 8
+                img[y + 1, x] += error * 1 / 8
             if x + 1 < width and y + 1 < height:
-                img_np[y + 1, x + 1] += error * 1 / 8
+                img[y + 1, x + 1] += error * 1 / 8
             if y + 2 < height:
-                img_np[y + 2, x] += error * 1 / 8
+                img[y + 2, x] += error * 1 / 8
 
-    return np.clip(img_np, 0, 255).astype(np.uint8)
+    return np.clip(img, 0, 255).astype(np.uint8)
 
 def quantize(
         img: Image.Image,
@@ -1822,3 +1923,229 @@ def reduce_size(
         return resized.crop((left, top, right, bottom))
 
     raise ValueError("fit_mode must be one of: 'fit', 'crop', 'stretch'")
+
+def palette_pass(
+    colors: list,
+    swatch_size: int = 64,
+    columns: int = 0,
+    save_to_slots: bool = False,
+    save_path: Optional[str] = None,
+) -> Image.Image:
+    """Create a palette image from a list of colors (hex or RGB tuples).
+
+    If `save_to_slots` is True and `save_path` is provided, save the
+    generated palette image to disk (e.g., into `saved/`). This function
+    is a simple backend pass that UI code can call. It does not itself
+    implement UI for editing the list; it only generates the image.
+    """
+    from palette_generator import generate_palette_image, save_palette
+
+    # Normalize swatch_size arg
+    if isinstance(swatch_size, int):
+        sw = (swatch_size, swatch_size)
+    else:
+        sw = tuple(swatch_size)
+
+    img = generate_palette_image(colors, swatch_size=sw, columns=columns)
+    if save_to_slots and save_path:
+        save_palette(colors, save_path, swatch_size=sw, columns=columns)
+    return img
+
+class edge_detection_types(Enum):
+    SOBEL = 0
+    CANNY = 1
+    DOG = 2 
+
+def find_edges(
+    img: Image.Image,
+    threshold: float = 0.1,
+    low_threshold: Optional[float] = None,
+    high_threshold: Optional[float] = None,
+    type: edge_detection_types | str = edge_detection_types.SOBEL,
+) -> Image.Image:
+    """
+    Detect edges in the image using one of the following methods:
+    - Sobel
+    - Canny
+    - Difference of Gaussians (DoG)
+
+    Args:
+        img: Input PIL Image.
+        threshold: Base threshold used by some detectors (default 0.1).
+            - Range: 0.0 .. 1.0 (float). Values outside this range will be clipped
+              by internal logic when used for 0..255 scaling for Canny.
+        low_threshold: Low hysteresis threshold for Canny (optional).
+            - Range: 0.0 .. 255.0 (float) or None. If None, computed as threshold * 255.
+        high_threshold: High hysteresis threshold for Canny (optional).
+            - Range: 0.0 .. 255.0 (float) or None. If None, computed as min(255, low_threshold * 2).
+        type: Edge detection method to use. Accepts one of:
+            - edge_detection_types.SOBEL
+            - edge_detection_types.CANNY
+            - edge_detection_types.DOG
+            (or the equivalent enum value). Default should be provided by caller.
+    Returns:
+        PIL.Image: Output image with edges detected (mode 'L' grayscale).
+    Notes:
+        - All numeric ranges above are the valid/expected ranges. Inputs will be
+          clipped/coerced where appropriate by the implementation.
+        - For Canny, `threshold` is interpreted in 0..1 and scaled to 0..255 if low/high
+          are not supplied.
+    """
+    if img is None:
+        raise ValueError("Image must be provided")
+    
+    if isinstance(type, str):
+        type = type.upper()
+        if type == "SOBEL":
+            type = edge_detection_types.SOBEL
+        elif type == "CANNY":
+            type = edge_detection_types.CANNY
+        elif type == "DOG":
+            type = edge_detection_types.DOG
+        else:
+            raise ValueError(f"Unknown edge detection type: {type}")
+    
+    img = img.convert("L")  # Convert to grayscale
+    img_np = np.array(img, dtype=np.float32)
+
+    # Helper: 2D convolution with small kernel using numpy (reflect padding)
+    def _convolve2d(img_arr: np.ndarray, kernel: np.ndarray) -> np.ndarray:
+        kh, kw = kernel.shape
+        pad_h, pad_w = kh // 2, kw // 2
+        padded = np.pad(img_arr, ((pad_h, pad_h), (pad_w, pad_w)), mode='reflect')
+        out = np.empty_like(img_arr, dtype=np.float32)
+        for i in range(img_arr.shape[0]):
+            for j in range(img_arr.shape[1]):
+                window = padded[i:i + kh, j:j + kw]
+                out[i, j] = np.sum(window * kernel)
+        return out
+
+    # Helper: 1D Gaussian kernel
+    def _gaussian_kernel1d(radius: int, sigma: float) -> np.ndarray:
+        if radius <= 0:
+            return np.array([1.0], dtype=np.float32)
+        ax = np.arange(-radius, radius + 1, dtype=np.float32)
+        kern = np.exp(-(ax * ax) / (2.0 * sigma * sigma))
+        kern /= kern.sum()
+        return kern
+
+    # Separable convolution using 1D kernel
+    def _separable_conv(img_arr: np.ndarray, kernel_1d: np.ndarray) -> np.ndarray:
+        radius = len(kernel_1d) // 2
+        # horizontal pass
+        padded_h = np.pad(img_arr, ((0, 0), (radius, radius)), mode='reflect')
+        temp = np.empty_like(img_arr, dtype=np.float32)
+        for y in range(img_arr.shape[0]):
+            for x in range(img_arr.shape[1]):
+                temp[y, x] = np.sum(padded_h[y, x:x + 2 * radius + 1] * kernel_1d)
+        # vertical pass
+        padded_v = np.pad(temp, ((radius, radius), (0, 0)), mode='reflect')
+        out = np.empty_like(img_arr, dtype=np.float32)
+        for y in range(img_arr.shape[0]):
+            for x in range(img_arr.shape[1]):
+                out[y, x] = np.sum(padded_v[y:y + 2 * radius + 1, x] * kernel_1d)
+        return out
+
+    if type == edge_detection_types.SOBEL:
+        # Sobel kernels
+        kx = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], dtype=np.float32)
+        ky = np.array([[1, 2, 1], [0, 0, 0], [-1, -2, -1]], dtype=np.float32)
+        gx = _convolve2d(img_np, kx)
+        gy = _convolve2d(img_np, ky)
+        edges = np.hypot(gx, gy)
+        maxv = edges.max() if edges.max() != 0 else 1.0
+        edges = (edges / maxv * 255.0).astype(np.uint8)
+        return Image.fromarray(edges, mode='L')
+
+    elif type == edge_detection_types.CANNY:
+        # Basic Canny-like pipeline implemented with numpy:
+        # 1) Gaussian smoothing, 2) gradient (Sobel), 3) non-maximum suppression,
+        # 4) hysteresis thresholding.
+        sigma = 1.0
+        radius = max(1, int(3.0 * sigma))
+        gk = _gaussian_kernel1d(radius, sigma)
+        smooth = _separable_conv(img_np, gk)
+
+        # gradients
+        kx = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], dtype=np.float32)
+        ky = np.array([[1, 2, 1], [0, 0, 0], [-1, -2, -1]], dtype=np.float32)
+        gx = _convolve2d(smooth, kx)
+        gy = _convolve2d(smooth, ky)
+        mag = np.hypot(gx, gy)
+        # Normalize magnitude to 0..255 for thresholding
+        mag_max = mag.max() if mag.max() != 0 else 1.0
+        mag_n = (mag / mag_max) * 255.0
+
+        # angles in degrees 0..180
+        ang = (np.arctan2(gy, gx) * (180.0 / math.pi)) % 180.0
+
+        # Non-maximum suppression (quantize directions to 4 sectors)
+        H, W = mag.shape
+        nms = np.zeros_like(mag_n, dtype=np.float32)
+        for y in range(1, H - 1):
+            for x in range(1, W - 1):
+                a = ang[y, x]
+                m = mag_n[y, x]
+                # determine neighbors to compare
+                if (0 <= a < 22.5) or (157.5 <= a <= 180):
+                    n1 = mag_n[y, x - 1]; n2 = mag_n[y, x + 1]
+                elif 22.5 <= a < 67.5:
+                    n1 = mag_n[y - 1, x + 1]; n2 = mag_n[y + 1, x - 1]
+                elif 67.5 <= a < 112.5:
+                    n1 = mag_n[y - 1, x]; n2 = mag_n[y + 1, x]
+                else:  # 112.5 .. 157.5
+                    n1 = mag_n[y - 1, x - 1]; n2 = mag_n[y + 1, x + 1]
+
+                if m >= n1 and m >= n2:
+                    nms[y, x] = m
+                else:
+                    nms[y, x] = 0.0
+
+        # hysteresis thresholds
+        if low_threshold is None or high_threshold is None:
+            low_threshold = threshold * 255.0
+            high_threshold = min(255.0, low_threshold * 2.0)
+        low_t = float(np.clip(low_threshold, 0.0, 255.0))
+        high_t = float(np.clip(high_threshold, 0.0, 255.0))
+
+        strong = (nms >= high_t)
+        weak = ((nms >= low_t) & (nms < high_t))
+
+        edges_bool = np.zeros_like(nms, dtype=bool)
+        # initialize with strong edges
+        sy, sx = np.where(strong)
+        stack = list(zip(sy.tolist(), sx.tolist()))
+        edges_bool[strong] = True
+
+        # 8-connected hysteresis: promote weak neighbors connected to strong
+        while stack:
+            cy, cx = stack.pop()
+            for dy in (-1, 0, 1):
+                for dx in (-1, 0, 1):
+                    ny, nx = cy + dy, cx + dx
+                    if ny < 0 or ny >= H or nx < 0 or nx >= W:
+                        continue
+                    if weak[ny, nx] and not edges_bool[ny, nx]:
+                        edges_bool[ny, nx] = True
+                        stack.append((ny, nx))
+
+        edges_uint8 = (edges_bool.astype(np.uint8) * 255)
+        return Image.fromarray(edges_uint8, mode='L')
+
+    elif type == edge_detection_types.DOG:
+        # Difference of Gaussians: blur with two sigmas and subtract
+        sigma1 = 1.0
+        sigma2 = 2.0
+        r1 = max(1, int(3.0 * sigma1))
+        r2 = max(1, int(3.0 * sigma2))
+        k1 = _gaussian_kernel1d(r1, sigma1)
+        k2 = _gaussian_kernel1d(r2, sigma2)
+        b1 = _separable_conv(img_np, k1)
+        b2 = _separable_conv(img_np, k2)
+        dog = b1 - b2
+        m = np.abs(dog).max() if np.abs(dog).max() != 0 else 1.0
+        edges = (np.abs(dog) / m * 255.0).astype(np.uint8)
+        return Image.fromarray(edges, mode='L')
+
+    else:
+        raise ValueError(f"Unknown edge detection type: {type}")

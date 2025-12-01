@@ -225,6 +225,53 @@ def build_setting_name_map(meta_obj: Optional[dict]) -> Dict[str, str]:
     return mapping
 
 
+def _tokens(s: str) -> set:
+    if not s:
+        return set()
+    import re
+    parts = re.split(r"[^0-9a-zA-Z]+", s.lower())
+    return set(p for p in parts if p)
+
+
+def resolve_func_name(renderpass_type: str) -> str:
+    """Resolve the underlying function name for a render pass display string.
+
+    This prefers an exact attribute on the `passes` module, then consults the
+    cached `renderPasses.json` metadata (via `RenderPassWidget._settings_cache`) to
+    map display names or keys to the configured `func_name`. If nothing matches
+    we fall back to the original display string.
+    """
+    # If the passes module already provides a function with this name, use it.
+    if hasattr(passes, renderpass_type):
+        return renderpass_type
+
+    cache = getattr(RenderPassWidget, '_settings_cache', None)
+    if not isinstance(cache, dict):
+        return renderpass_type
+
+    tgt = _tokens(renderpass_type)
+    # prefer exact token equality on display_name/func_name
+    for key, val in cache.items():
+        if not isinstance(val, dict):
+            continue
+        dn = val.get('display_name') or ''
+        fn = val.get('func_name') or ''
+        if _tokens(dn) == tgt or _tokens(fn) == tgt:
+            return fn or key
+
+    # allow subset matching (e.g. 'mix percent' -> 'Mix (By percent)')
+    for key, val in cache.items():
+        if not isinstance(val, dict):
+            continue
+        dn = val.get('display_name') or ''
+        fn = val.get('func_name') or ''
+        key_tokens = _tokens(key)
+        if tgt and (tgt.issubset(_tokens(dn)) or tgt.issubset(_tokens(fn)) or tgt.issubset(key_tokens)):
+            return fn or key
+
+    return renderpass_type
+
+
 def build_dependency_graph(render_pass_widgets: List['RenderPassWidget']) -> Tuple[Dict[int, Set[int]], Dict[str, List[int]]]:
     pass_dependencies: Dict[int, Set[int]] = defaultdict(set)
     slot_producers: Dict[str, List[int]] = defaultdict(list)
@@ -278,6 +325,68 @@ def run_render_pass(render_pass_widget: 'RenderPassWidget', slot_table: 'ModernS
     output_slot = getattr(render_pass_widget, 'selectedOutput', None)
     settings = render_pass_widget.get_settings()
 
+    # Normalize common UI/global keys to the parameter names expected by
+    # render functions. This handles cases where older GUI code or saved
+    # settings use different keys (e.g. `useVerticalSplitting`, `sortMode`).
+    if isinstance(settings, dict):
+        lower_map = {k.lower(): k for k in list(settings.keys())}
+        def _has_lower(key):
+            return key.lower() in lower_map
+        # vSplitting aliases
+        if 'vSplitting' not in settings and _has_lower('useVerticalSplitting'):
+            source_key = lower_map['useverticalsplitting']
+            settings['vSplitting'] = bool(settings.get(source_key))
+        # sort mode aliases
+        if 'mode' not in settings and _has_lower('sortmode'):
+            source_key = lower_map['sortmode']
+            settings['mode'] = settings.get(source_key)
+        # rotate aliases
+        if 'rotate' not in settings and _has_lower('rotateimage'):
+            source_key = lower_map['rotateimage']
+            # map boolean to "0"/"90" style if necessary; here we keep boolean
+            settings['rotate'] = settings.get(source_key)
+        # flip aliases
+        if 'flipHorz' not in settings:
+            for candidate in ('fliphoriz', 'flip_horiz', 'flip_horizontal', 'mirror'):
+                if _has_lower(candidate):
+                    settings['flipHorz'] = bool(settings.get(lower_map[candidate]))
+                    break
+        if 'flipVert' not in settings:
+            for candidate in ('flipvert', 'flip_vert', 'flip_vertical'):
+                if _has_lower(candidate):
+                    settings['flipVert'] = bool(settings.get(lower_map[candidate]))
+                    break
+        # allow lowercase 'fliphoriz' typo mapping
+        if 'fliphoriz' in settings and 'flipHorz' not in settings:
+            settings['flipHorz'] = settings.get('fliphoriz')
+        # If vSplitting still not present, try to read the default from
+        # the renderPasses.json metadata (RenderPassWidget._settings_cache)
+        if 'vSplitting' not in settings:
+            try:
+                cache = getattr(RenderPassWidget, '_settings_cache', None)
+                if isinstance(cache, dict):
+                    meta = cache.get(render_pass_widget.renderpass_type)
+                    if isinstance(meta, dict):
+                        s_list = meta.get('settings')
+                        # settings in config may be dict or list
+                        if isinstance(s_list, dict):
+                            s_items = list(s_list.values())
+                        else:
+                            s_items = s_list or []
+                        for s in s_items:
+                            if not isinstance(s, dict):
+                                continue
+                            name = (s.get('name') or '')
+                            alias = (s.get('alias') or '')
+                            label = (s.get('label') or '')
+                            if any(x.lower() == 'vsplitting' for x in (name, alias, label)):
+                                settings['vSplitting'] = bool(s.get('default', True))
+                                break
+            except Exception:
+                # if anything fails, fall back to vertical splitting as user requested
+                if 'vSplitting' not in settings:
+                    settings['vSplitting'] = True
+
     if not output_slot:
         raise ValueError(f"Output slot not set for {renderpass_type}")
 
@@ -289,7 +398,8 @@ def run_render_pass(render_pass_widget: 'RenderPassWidget', slot_table: 'ModernS
     if progress_callback:
         progress_callback(f"Starting {renderpass_type}...")
 
-    func_name = renderpass_type
+    # Resolve the actual function name using the configured metadata
+    func_name = resolve_func_name(renderpass_type)
     # All settings and mapping should be handled by the new config system
     if not hasattr(passes, func_name):
         raise NotImplementedError(f"Renderpass '{renderpass_type}' (resolved to '{func_name}') not implemented.")
@@ -302,9 +412,12 @@ def run_render_pass(render_pass_widget: 'RenderPassWidget', slot_table: 'ModernS
             except Exception:
                 pass
 
-    if renderpass_type == "PixelSort":
-        flip_h = settings.pop("flipHorz", False)
-        flip_v = settings.pop("flipVert", False)
+    # Special handling for pixel sort style passes: normalize flip/rotate settings
+    if func_name in ("wrap_sort", "sort", "PixelSort", "pixel_sort"):
+        # Preserve original keys so functions that expect `flipHorz`/`flipVert`
+        # still receive them. Also provide a compatibility `flip_dir` key.
+        flip_h = settings.get("flipHorz", False)
+        flip_v = settings.get("flipVert", False)
         settings["flip_dir"] = bool(flip_h) or bool(flip_v)
         settings.setdefault("mode", "lum")
         settings.setdefault("rotate", False)

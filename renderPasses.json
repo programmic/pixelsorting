@@ -317,6 +317,13 @@
         ],
         "default": "median_cut",
         "ui_type": "dropdown"
+      },
+      "palette": {
+        "name": "palette",
+        "label": "Palette Colors",
+        "type": "palette",
+        "default": [],
+        "ui_type": "palette"
       }
     }
   },
@@ -352,6 +359,49 @@
         ],
         "default": "720x1280",
         "ui_type": "dropdown"
+      }
+    }
+  },
+  "find_edges": {
+    "func_name": "find_edges",
+    "display_name": "EdgeDetect",
+    "category": "Modify",
+    "settings": {
+      "threshold": {
+        "name": "threshold",
+        "label": "Threshold",
+        "type": "float",
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.45
+      },
+      "low_threshold": {
+        "name": "low_threshold",
+        "label": "Threshold Min",
+        "type": "float",
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.333
+      },
+      "high_threshold": {
+        "name": "high_threshold",
+        "label": "Threshold Max",
+        "type": "float",
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.666
+      },
+      "type": {
+        "name": "type",
+        "label": "Detection Method",
+        "type": "str",
+        "options": [
+          "SOBEL",
+          "CANNY",
+          "DOG"
+        ],
+        "default": "SOBEL",
+        "ui_type": "radio"
       }
     }
   }

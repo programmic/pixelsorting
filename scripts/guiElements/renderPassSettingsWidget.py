@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Optional
 from PySide6.QtWidgets import *
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
 from superqt import QDoubleSlider, QToggleSwitch, QRangeSlider
 
 
@@ -14,97 +15,6 @@ class RenderPassSettingsWidget(QWidget):
     :param settings_config: A list of settings configurations.
     :param parent: The parent widget.
     """
-    def __init__(self, settings_config: list[dict], saved_settings: Optional[dict] = None, parent: Optional[QWidget] = None):
-        if switch_count > 0 and switch_group not in [self.layout.itemAt(i).widget() for i in range(self.layout.count()) if self.layout.itemAt(i).widget() is not None]:
-            self.layout.addWidget(switch_group)
-        super().__init__(parent)
-        self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(4, 4, 4, 4)
-        self.layout.setSpacing(4)
-        self.controls = {}
-        self._used_labels = set()
-        self.settings_config = settings_config
-
-        # Helper to resolve a requested key using alias or label fallback
-        def resolve_control_key(request_key: str):
-            # try direct match first
-            if request_key in self.controls:
-                return request_key
-            # try matching by alias in settings_config
-            for s in self.settings_config:
-                if s.get('alias') == request_key and s.get('alias') in self.controls:
-                    return s.get('alias')
-                if s.get('label') == request_key and s.get('alias') in self.controls:
-                    return s.get('alias')
-            # try matching by label
-            for s in self.settings_config:
-                lbl = s.get('label')
-                if lbl and lbl == request_key and lbl in self.controls:
-                    return lbl
-            return None
-
-        self._resolve_control_key = resolve_control_key
-
-        switch_group = QWidget()
-        switch_layout = QHBoxLayout()
-        switch_layout.setContentsMargins(4, 4, 4, 4)
-        switch_layout.setSpacing(4)
-        switch_group.setLayout(switch_layout)
-        switch_count = 0
-
-        # Only use settings from config, skip any legacy/extra logic
-        filtered_settings = [s for s in self.settings_config if "kategory" not in s]
-        for idx, setting in enumerate(filtered_settings):
-            # Always use display label for UI, but use 'name' for internal mapping
-            label_text = setting.get("display_label") or setting.get("label")
-            control_key = setting.get('name')
-            if not label_text or not str(label_text).strip():
-                continue
-            # Track used display labels for UI uniqueness only
-            if label_text in self._used_labels:
-                base_label = label_text
-                count = 1
-                while label_text in self._used_labels:
-                    label_text = f"{base_label}_{count}"
-                    count += 1
-            self._used_labels.add(label_text)
-            default_value = setting.get("default")
-            control = None
-            # --- Support for enum and str with options ---
-            t = setting.get("type")
-            if t in ("enum", "str") and setting.get("options"):
-                widget = QWidget()
-                v_layout = QVBoxLayout()
-                v_layout.setContentsMargins(0, 0, 0, 0)
-                label = QLabel(label_text)
-                label.setStyleSheet("color: #222; font-weight: bold; background: #f5f5f5; padding: 2px; border-radius: 3px;")
-                v_layout.addWidget(label)
-                options = setting.get("options", [])
-                ui_type = setting.get("ui_type", "dropdown")
-                if ui_type == "dropdown":
-                    combo = QComboBox()
-                    combo.setStyleSheet("background: #e0e0e0; color: #222; border-radius: 3px;")
-                    combo.addItems(options)
-                    if default_value is not None:
-                        idx = combo.findText(str(default_value))
-                        if idx >= 0:
-                            combo.setCurrentIndex(idx)
-                    v_layout.addWidget(combo)
-                    self.controls[control_key] = combo
-                elif ui_type == "radio":
-                    group = QButtonGroup(widget)
-                    radio_layout = QHBoxLayout()
-                    for opt in options:
-                        radio = QRadioButton(str(opt))
-                        radio_layout.addWidget(radio)
-                        group.addButton(radio)
-                        if str(opt) == str(default_value):
-                            radio.setChecked(True)
-                    v_layout.addLayout(radio_layout)
-                    self.controls[control_key] = group
-                widget.setLayout(v_layout)
-                self.layout.addWidget(widget)
-                continue
     """
     A widget for rendering pass settings.
 
@@ -294,6 +204,251 @@ class RenderPassSettingsWidget(QWidget):
                 control = widget
                 # No frame/border for mask/slot row
                 self.layout.addWidget(widget)
+                continue
+
+            # --- Palette list control: allows adding/editing/deleting hex colors ---
+            if t == "palette" or setting.get('ui_type') == 'palette':
+                widget = QWidget()
+                v_layout = QVBoxLayout()
+                v_layout.setContentsMargins(0, 0, 0, 0)
+                label = QLabel(label_text)
+                label.setStyleSheet("color: #222; font-weight: bold; background: #f5f5f5; padding: 2px; border-radius: 3px;")
+                v_layout.addWidget(label)
+
+                list_widget = QListWidget()
+                # Allow the list to expand the panel instead of scrolling
+                from PySide6.QtWidgets import QSizePolicy
+                list_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+                list_widget.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+                list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+                # Prevent the default selection overlay from hiding the swatch color.
+                # Provide several fallbacks for different Qt styles.
+                list_widget.setStyleSheet(
+                    "QListWidget::item:selected { background: transparent; }"
+                    "QListView::item:selected { background: transparent; }"
+                    "QListView::item:selected:!active { background: transparent; }"
+                )
+                v_layout.addWidget(list_widget)
+
+                btn_row = QHBoxLayout()
+                add_btn = QPushButton("Add")
+                edit_btn = QPushButton("Edit")
+                # Remove global delete button; use per-item delete instead
+                pick_btn = QPushButton("HSV Picker")
+                pick_from_slot_btn = QPushButton("Pick From Slot")
+                btn_row.addWidget(add_btn)
+                btn_row.addWidget(edit_btn)
+                btn_row.addWidget(pick_btn)
+                btn_row.addWidget(pick_from_slot_btn)
+                v_layout.addLayout(btn_row)
+
+                def _make_color_item_widget(hexcol: str):
+                    # container widget for each list item: swatch + label + delete
+                    w = QWidget()
+                    h = QHBoxLayout()
+                    h.setContentsMargins(4, 2, 4, 2)
+                    swatch = QLabel()
+                    swatch.setFixedSize(28, 20)
+                    swatch.setStyleSheet(f"background: {hexcol}; border: 1px solid #222;")
+                    label = QLabel(hexcol)
+                    label.setStyleSheet("padding-left: 6px;")
+                    h.addWidget(swatch)
+                    h.addWidget(label)
+                    h.addStretch()
+                    del_btn_item = QPushButton("✕")
+                    del_btn_item.setFixedSize(22, 22)
+                    del_btn_item.setToolTip("Delete this color")
+                    del_btn_item.setStyleSheet("background: transparent; color: #b00; border: none;")
+                    h.addWidget(del_btn_item)
+                    w.setLayout(h)
+                    return w, swatch, label, del_btn_item
+
+                def _add_color(hexcol: str):
+                    item = QListWidgetItem()
+                    # Use transparent background on the item; swatch widget shows color
+                    item.setBackground(QColor(0, 0, 0, 0))
+                    widget_item, swatch_lbl, hex_lbl, del_btn_item = _make_color_item_widget(hexcol)
+                    hex_lbl.setText(hexcol)
+                    swatch_lbl.setStyleSheet(f"background: {hexcol}; border: 1px solid #222;")
+                    # store the hex string on the QListWidgetItem so other code
+                    # (which expects .text()) continues to work
+                    item.setText(hexcol)
+                    list_widget.addItem(item)
+                    list_widget.setItemWidget(item, widget_item)
+
+                    def _on_delete():
+                        # find and remove this item
+                        for i in range(list_widget.count()):
+                            it = list_widget.item(i)
+                            if list_widget.itemWidget(it) is widget_item:
+                                list_widget.takeItem(i)
+                                _refresh_container_size()
+                                return
+
+                    del_btn_item.clicked.connect(_on_delete)
+
+                def _update_selection_visuals():
+                    # add a subtle outline to the selected item's widget and
+                    # remove it from others to avoid the default gray overlay
+                    for i in range(list_widget.count()):
+                        it = list_widget.item(i)
+                        w = list_widget.itemWidget(it)
+                        if w is None:
+                            continue
+                        if it.isSelected():
+                            w.setStyleSheet("border: 2px solid #1976d2; border-radius:4px;")
+                        else:
+                            w.setStyleSheet("")
+
+                list_widget.itemSelectionChanged.connect(_update_selection_visuals)
+
+                def on_pick():
+                    try:
+                        from guiElements.hsvColorDialog import HSVColorDialog
+                        hexc = HSVColorDialog.get_color(self)
+                        if hexc:
+                            _add_color(hexc)
+                    except Exception:
+                        # fallback
+                        col = QColorDialog.getColor()
+                        if col.isValid():
+                            _add_color(col.name())
+
+                def on_pick_from_slot():
+                    # Prefer the parent RenderPassWidget's first input slot.
+                    # If that input is unset, fall back to slot0.
+                    slot_to_use = None
+                    parent = self.parent()
+                    from guiElements.renderPassWidget import RenderPassWidget
+                    while parent is not None and not isinstance(parent, RenderPassWidget):
+                        parent = parent.parent()
+
+                    if isinstance(parent, RenderPassWidget):
+                        # parent.selectedInputs is a list; pick first non-None if available
+                        sel_inputs = getattr(parent, 'selectedInputs', []) or []
+                        for s in sel_inputs:
+                            if s:
+                                slot_to_use = s
+                                break
+                    # default to slot0
+                    if not slot_to_use:
+                        slot_to_use = 'slot0'
+
+                    cb = getattr(self, 'pick_color_from_slot', None)
+                    hexc = None
+                    if cb:
+                        try:
+                            hexc = cb(slot_to_use)
+                        except Exception:
+                            hexc = None
+
+                    if hexc:
+                        _add_color(hexc)
+                        _refresh_container_size()
+                        return
+
+                    # fallback: try to find top-level GUI and use its slotTable
+                    gui = None
+                    anc = self.parent()
+                    while anc is not None:
+                        if hasattr(anc, 'slotTable'):
+                            gui = anc
+                            break
+                        anc = anc.parent()
+                    if gui is not None:
+                        try:
+                            img = gui.slotTable.get_image(slot_to_use)
+                            if img:
+                                from guiElements.imageEyeDropperDialog import ImageEyeDropperDialog
+                                hexc = ImageEyeDropperDialog.pick_from_pil(img, self)
+                                if hexc:
+                                    _add_color(hexc)
+                                    _refresh_container_size()
+                                    return
+                        except Exception:
+                            pass
+
+                    from PySide6.QtWidgets import QMessageBox
+                    QMessageBox.information(self, "Pick Failed", f"Could not pick color from slot: {slot_to_use}")
+
+                def _refresh_container_size():
+                    # Walk up to find the RenderPassWidget container and update its size
+                    try:
+                        from guiElements.renderPassWidget import RenderPassWidget
+                    except Exception:
+                        RenderPassWidget = None
+                    parent = self.parent()
+                    while parent is not None:
+                        if RenderPassWidget is not None and isinstance(parent, RenderPassWidget):
+                            try:
+                                parent.adjustSize()
+                                parent.updateGeometry()
+                                # Try to find enclosing QListWidget and update the item size hint
+                                anc = parent.parent()
+                                from PySide6.QtWidgets import QListWidget
+                                while anc is not None and not isinstance(anc, QListWidget):
+                                    anc = anc.parent()
+                                if anc is not None:
+                                    # find item corresponding to parent
+                                    for i in range(anc.count()):
+                                        it = anc.item(i)
+                                        if anc.itemWidget(it) is parent:
+                                            it.setSizeHint(parent.sizeHint())
+                                            anc.updateGeometry()
+                                            break
+                            except Exception:
+                                pass
+                            break
+                        parent = parent.parent()
+
+                def on_add():
+                    text, ok = QInputDialog.getText(self, "Add Color", "Hex (e.g. #ff00aa):")
+                    if ok and text:
+                        try:
+                            QColor(text)  # validate
+                            _add_color(text)
+                            _refresh_container_size()
+                        except Exception:
+                            pass
+
+                def on_edit():
+                    it = list_widget.currentItem()
+                    if not it:
+                        return
+                    w = list_widget.itemWidget(it)
+                    if w is None:
+                        return
+                    # label is the second QLabel in the widget
+                    lbls = w.findChildren(QLabel)
+                    lbl = lbls[1] if len(lbls) > 1 else None
+                    cur = lbl.text() if lbl else ''
+                    text, ok = QInputDialog.getText(self, "Edit Color", "Hex:", text=cur)
+                    if ok and text:
+                        try:
+                            QColor(text)
+                            if lbl:
+                                lbl.setText(text)
+                            sw = lbls[0] if len(lbls) > 0 else None
+                            if sw:
+                                sw.setStyleSheet(f"background: {text}; border: 1px solid #222;")
+                            # update the underlying QListWidgetItem text so get_values() sees the change
+                            for i in range(list_widget.count()):
+                                it = list_widget.item(i)
+                                if list_widget.itemWidget(it) is w:
+                                    it.setText(text)
+                                    break
+                            _refresh_container_size()
+                        except Exception:
+                            pass
+
+                add_btn.clicked.connect(on_add)
+                edit_btn.clicked.connect(on_edit)
+                pick_btn.clicked.connect(on_pick)
+                pick_from_slot_btn.clicked.connect(on_pick_from_slot)
+
+                widget.setLayout(v_layout)
+                self.layout.addWidget(widget)
+                self.controls[control_key] = list_widget
                 continue
 
             if ctype == ControlType.SWITCH or t in ["switch", "bool", "boolean"]:
@@ -910,6 +1065,11 @@ class RenderPassSettingsWidget(QWidget):
                     result[key] = ""
                 else:
                     result[key] = val
+            elif isinstance(control, QListWidget):
+                items = []
+                for i in range(control.count()):
+                    items.append(control.item(i).text())
+                result[key] = items
             else:
                 result[key] = ""
         # return result (removed misplaced return outside function)
@@ -973,6 +1133,19 @@ class RenderPassSettingsWidget(QWidget):
                 elif hasattr(control, 'setText'):
                     try:
                         control.setText(str(val))
+                    except Exception:
+                        pass
+                elif isinstance(control, QListWidget):
+                    try:
+                        control.clear()
+                        if isinstance(val, (list, tuple)):
+                            for v in val:
+                                item = QListWidgetItem(str(v))
+                                try:
+                                    item.setBackground(QColor(str(v)))
+                                except Exception:
+                                    pass
+                                control.addItem(item)
                     except Exception:
                         pass
                 else:

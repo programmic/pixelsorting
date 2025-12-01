@@ -114,6 +114,34 @@ class RenderPassWidget(QWidget):
         # Always use config for settingsWidget
         saved_settings = self.savedSettings if self.savedSettings else {}
         self.settingsWidget = RenderPassSettingsWidget(config, saved_settings)
+        # expose available slots to settings widget so controls can reference them
+        try:
+            self.settingsWidget.availableSlots = self.availableSlots
+        except Exception:
+            pass
+        # allow settings widget to request color picks from a slot image;
+        # RenderPassWidget will try to find a top-level GUI with a slotTable
+        def _pick_color_from_slot(slot_name: str) -> str | None:
+            parent = self.parent()
+            gui = None
+            while parent is not None:
+                if hasattr(parent, 'slotTable'):
+                    gui = parent
+                    break
+                parent = parent.parent()
+            if gui is None:
+                return None
+            try:
+                img = gui.slotTable.get_image(slot_name)
+                if img is None:
+                    return None
+                # Use image eye-dropper dialog
+                from guiElements.imageEyeDropperDialog import ImageEyeDropperDialog
+                return ImageEyeDropperDialog.pick_from_pil(img, self)
+            except Exception:
+                return None
+
+        self.settingsWidget.pick_color_from_slot = _pick_color_from_slot
         self.contentLayout.addWidget(self.settingsWidget)
 
         self.mainLayout.addWidget(self.contentWidget)
@@ -346,7 +374,10 @@ class RenderPassWidget(QWidget):
                 cat = (settings_entry.get('category') or '').lower()
                 dn = (settings_entry.get('display_name') or '').lower()
                 fn = (settings_entry.get('func_name') or '').lower()
-                mix_keywords = ('mix', 'alpha', 'subtract', 'scale', 'lerp', 'add', 'difference')
+                # 'scale' used to cause single-input scale/downscale passes to
+                # be treated as two-input passes (e.g. 'Downscale'). Remove
+                # 'scale' from the heuristic so those remain single-input.
+                mix_keywords = ('mix', 'alpha', 'subtract', 'lerp', 'add', 'difference')
                 if any(k in cat for k in mix_keywords) or any(k in dn for k in mix_keywords) or any(k in fn for k in mix_keywords):
                     num_inputs = 2
                 else:

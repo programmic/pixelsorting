@@ -15,6 +15,27 @@ import os
 from pathlib import Path
 from typing import Dict, Any, Tuple
 
+# cached renderPasses.json content
+_RENDERPASSES_CACHE: Dict[str, Any] | None = None
+
+
+def load_renderpasses_config(path: str | None = None) -> Dict[str, Any]:
+    """Load and cache the project's `renderPasses.json`.
+
+    If `path` is None the function will look for `renderPasses.json` in the
+    repository root (one level above this script).
+    """
+    global _RENDERPASSES_CACHE
+    if _RENDERPASSES_CACHE is not None:
+        return _RENDERPASSES_CACHE
+    repo_root = Path(__file__).parent.parent
+    json_path = Path(path) if path else repo_root / 'renderPasses.json'
+    if not json_path.exists():
+        _RENDERPASSES_CACHE = {}
+        return _RENDERPASSES_CACHE
+    _RENDERPASSES_CACHE = load_config(str(json_path))
+    return _RENDERPASSES_CACHE
+
 
 def load_config(path: str) -> Dict[str, Any]:
     with open(path, 'r', encoding='utf-8') as f:

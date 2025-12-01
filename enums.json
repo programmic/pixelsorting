@@ -5,5 +5,10 @@
     "r",
     "g",
     "b"
+  ],
+  "type": [
+    "sobel",
+    "canny",
+    "dog"
   ]
 }
