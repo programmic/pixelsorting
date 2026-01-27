@@ -7,6 +7,8 @@ from typing import Dict, List, Set, Optional, Tuple, Callable, TYPE_CHECKING, An
 from collections import defaultdict, deque
 
 from PIL import Image
+import io
+import hashlib
 
 import passes
 
@@ -75,6 +77,13 @@ def saveImageToSlot(image: Image.Image, slotName: Any, slotTable: 'ModernSlotTab
         except Exception:
             pass
     slotTable.set_image(slot_key, image)
+    # Update image cache if available
+    try:
+        img_hash = _compute_image_hash(image)
+        if hasattr(slotTable, '_image_cache') and isinstance(slotTable._image_cache, dict):
+            slotTable._image_cache[slot_key] = {'image_hash': img_hash, 'pass_hash': None, 'image': image}
+    except Exception:
+        pass
 
 
 def getSlotDependencies(renderPassWidget: 'RenderPassWidget') -> Set[str]:
@@ -157,6 +166,13 @@ def saveImageToSlot(image: Image.Image, slotName: str, slotTable: 'ModernSlotTab
         except Exception:
             pass
     slotTable.set_image(slotName, image)
+    # update image cache if present
+    try:
+        img_hash = _compute_image_hash(image)
+        if hasattr(slotTable, '_image_cache') and isinstance(slotTable._image_cache, dict):
+            slotTable._image_cache[slotName] = {'image_hash': img_hash, 'pass_hash': None, 'image': image}
+    except Exception:
+        pass
 
 
 def getSlotDependencies(renderPassWidget: 'RenderPassWidget') -> Set[str]:
@@ -223,6 +239,34 @@ def build_setting_name_map(meta_obj: Optional[dict]) -> Dict[str, str]:
             if s.get('alias'):
                 mapping[s.get('alias')] = param_name
     return mapping
+
+
+def _compute_image_hash(img: Image.Image) -> str:
+    """Compute a stable hash for a PIL Image using PNG bytes."""
+    try:
+        buf = io.BytesIO()
+        img.save(buf, format='PNG')
+        buf.seek(0)
+        h = hashlib.sha256(buf.read()).hexdigest()
+        return h
+    except Exception:
+        # Fallback: use repr
+        return hashlib.sha256(repr(img).encode('utf-8')).hexdigest()
+
+
+def _compute_pass_signature(func_name: str, settings: dict, input_hashes: List[str], mask_hash: Optional[str]) -> str:
+    """Create a deterministic signature string for a render pass invocation."""
+    try:
+        import json
+        settings_str = json.dumps(settings or {}, sort_keys=True, default=str)
+    except Exception:
+        settings_str = str(settings)
+    parts = [func_name, settings_str]
+    parts.extend(input_hashes or [])
+    if mask_hash:
+        parts.append(mask_hash)
+    sig = '|'.join(parts)
+    return hashlib.sha256(sig.encode('utf-8')).hexdigest()
 
 
 def _tokens(s: str) -> set:
@@ -442,6 +486,33 @@ def run_render_pass(render_pass_widget: 'RenderPassWidget', slot_table: 'ModernS
         img = loadImageFromSlot(slot, slot_table)
         input_images.append(img)
 
+    # --- CACHING: compute input image hashes and pass signature; skip if unchanged ---
+    input_hashes: List[str] = []
+    input_slot_keys: List[str] = []
+    for slot in inputs:
+        # normalize slot key
+        try:
+            sk = Slot.from_value(slot).value
+        except Exception:
+            sk = slot
+        input_slot_keys.append(sk)
+        # prefer cached image hash if available
+        ih = None
+        try:
+            if hasattr(slot_table, '_image_cache') and isinstance(slot_table._image_cache, dict):
+                entry = slot_table._image_cache.get(sk)
+                if isinstance(entry, dict) and entry.get('image_hash'):
+                    ih = entry['image_hash']
+        except Exception:
+            ih = None
+        if ih is None:
+            try:
+                img = loadImageFromSlot(sk, slot_table)
+                ih = _compute_image_hash(img)
+            except Exception:
+                ih = hashlib.sha256(str(sk).encode('utf-8')).hexdigest()
+        input_hashes.append(ih)
+
     args: List[object] = []
     img_index = 0
     for param in sig.parameters.values():
@@ -495,6 +566,55 @@ def run_render_pass(render_pass_widget: 'RenderPassWidget', slot_table: 'ModernS
     try:
         if progress_callback:
             progress_callback(f"Processing {renderpass_type}...")
+        # compute mask hash if applicable
+        mask_slot = None
+        if isinstance(settings.get('mask'), dict):
+            mask_slot = settings['mask'].get('slot')
+        else:
+            mask_slot = settings.get('mask')
+        mask_hash = None
+        if isinstance(mask_slot, str) and mask_slot and mask_slot != 'None':
+            try:
+                mk = Slot.from_value(mask_slot).value
+            except Exception:
+                mk = mask_slot
+            try:
+                if hasattr(slot_table, '_image_cache') and isinstance(slot_table._image_cache, dict) and slot_table._image_cache.get(mk):
+                    mask_hash = slot_table._image_cache.get(mk, {}).get('image_hash')
+                else:
+                    mask_img = loadImageFromSlot(mk, slot_table)
+                    mask_hash = _compute_image_hash(mask_img)
+            except Exception:
+                mask_hash = None
+        # compute pass signature/hash
+        try:
+            pass_hash = _compute_pass_signature(func_name, settings, input_hashes, mask_hash)
+        except Exception:
+            pass_hash = None
+        # If output slot already has cached result with same pass_hash, reuse it
+        try:
+            out_slot_key = None
+            try:
+                out_slot_key = Slot.from_value(output_slot).value
+            except Exception:
+                out_slot_key = output_slot
+            cache_entry = None
+            if hasattr(slot_table, '_image_cache') and isinstance(slot_table._image_cache, dict):
+                cache_entry = slot_table._image_cache.get(out_slot_key)
+            if cache_entry and pass_hash and cache_entry.get('pass_hash') == pass_hash:
+                # reuse cached image
+                cached_img = cache_entry.get('image')
+                if cached_img is not None:
+                    if progress_callback:
+                        progress_callback(f"Skipping {renderpass_type} (cached)")
+                    # Ensure slot table has the image set (it likely already does)
+                    try:
+                        slot_table.set_image(out_slot_key, cached_img)
+                    except Exception:
+                        pass
+                    return cached_img
+        except Exception:
+            pass
         # Print a concise summary of the arguments we're about to pass to the render function
         def _short_repr(v):
             try:
@@ -531,7 +651,92 @@ def run_render_pass(render_pass_widget: 'RenderPassWidget', slot_table: 'ModernS
         if progress_callback:
             progress_callback(f"Calling {renderpass_type} (function {func_name}) with {len(arg_map)} args")
 
-        output_img = func(*args)
+        # Prepare to pass an inner progress callback if the function accepts it
+        kwargs = {}
+        try:
+            accept_progress = False
+            progress_param_name = None
+            if 'progress' in sig.parameters:
+                progress_param_name = 'progress'
+                accept_progress = True
+            elif 'progress_callback' in sig.parameters:
+                progress_param_name = 'progress_callback'
+                accept_progress = True
+            else:
+                # If the function accepts **kwargs, we'll pass a 'progress' kw
+                for p in sig.parameters.values():
+                    if p.kind == inspect.Parameter.VAR_KEYWORD:
+                        progress_param_name = 'progress'
+                        accept_progress = True
+                        break
+            if accept_progress and progress_param_name:
+                def _pass_inner_progress(payload):
+                    # payload can be string, dict, or percent number
+                    try:
+                        if isinstance(payload, dict):
+                            # forward structured inner progress
+                            if progress_callback:
+                                progress_callback({'type': 'inner', 'pass': renderpass_type, **payload})
+                        elif isinstance(payload, (int, float)):
+                            if progress_callback:
+                                progress_callback({'type': 'inner', 'pass': renderpass_type, 'percent': int(payload), 'message': ''})
+                        else:
+                            if progress_callback:
+                                progress_callback({'type': 'inner', 'pass': renderpass_type, 'message': str(payload)})
+                    except Exception:
+                        pass
+
+                # If the parameter exists as a positional parameter and we already
+                # prepared a positional args list that includes an entry for it,
+                # place the progress callable into that position to avoid passing
+                # it twice (positional + kw). Otherwise, pass as kw.
+                param_names = [p.name for p in sig.parameters.values()]
+                try:
+                    if progress_param_name in param_names:
+                        idx = param_names.index(progress_param_name)
+                        if idx < len(args):
+                            args[idx] = _pass_inner_progress
+                        else:
+                            kwargs[progress_param_name] = _pass_inner_progress
+                    else:
+                        kwargs[progress_param_name] = _pass_inner_progress
+                except Exception:
+                    kwargs[progress_param_name] = _pass_inner_progress
+        except Exception:
+            kwargs = {}
+
+        result = func(*args, **kwargs)
+
+        # If the function is a generator/yielding progress, iterate it
+        try:
+            import types
+            final_img = None
+            if isinstance(result, types.GeneratorType):
+                for item in result:
+                    # items may be progress payloads or the final image
+                    if isinstance(item, dict) or isinstance(item, str) or isinstance(item, (int, float)):
+                        try:
+                            if progress_callback:
+                                progress_callback({'type': 'inner', 'pass': renderpass_type, 'message': item})
+                        except Exception:
+                            pass
+                    elif isinstance(item, Image.Image):
+                        final_img = item
+                # Some generators may return via StopIteration.value (Python 3.3+)
+                try:
+                    # exhaust generator to get return value if not already
+                    leftover = None
+                except Exception:
+                    pass
+                if final_img is not None:
+                    output_img = final_img
+                else:
+                    # If generator did not yield an Image, assume last yielded thing was image-like
+                    output_img = result
+            else:
+                output_img = result
+        except Exception:
+            output_img = result
         if output_img is None:
             raise ValueError(f"{renderpass_type} returned None instead of an image")
         if not isinstance(output_img, Image.Image):
@@ -542,7 +747,26 @@ def run_render_pass(render_pass_widget: 'RenderPassWidget', slot_table: 'ModernS
         raise RuntimeError(f"Error in render pass '{renderpass_type}': {e}")
 
     try:
-        saveImageToSlot(output_img, output_slot, slot_table)
+        # Save image and store pass_hash in the slot cache if available
+        try:
+            saveImageToSlot(output_img, output_slot, slot_table)
+            # update pass_hash in cache
+            try:
+                out_slot_key = None
+                try:
+                    out_slot_key = Slot.from_value(output_slot).value
+                except Exception:
+                    out_slot_key = output_slot
+                if hasattr(slot_table, '_image_cache') and isinstance(slot_table._image_cache, dict):
+                    entry = slot_table._image_cache.get(out_slot_key) or {}
+                    entry['pass_hash'] = pass_hash
+                    entry['image'] = output_img
+                    slot_table._image_cache[out_slot_key] = entry
+            except Exception:
+                pass
+        except Exception:
+            # fallback save without caching
+            saveImageToSlot(output_img, output_slot, slot_table)
     except Exception as e:
         raise RuntimeError(f"Error saving output from {renderpass_type} to {output_slot}: {e}")
 
@@ -576,21 +800,61 @@ def run_all_render_passes(gui_instance: 'GUI', progress_callback: Optional[Calla
             progress_callback("Analyzing dependencies...")
         dependencies, slot_producers = build_dependency_graph(render_pass_widgets)
         ordered_indices = topological_sort(render_pass_widgets, dependencies)
-        if progress_callback:
-            progress_callback(f"Processing {len(ordered_indices)} render passes...")
+        total = len(ordered_indices)
+        # Notify start of processing with total count
+        try:
+            if progress_callback:
+                progress_callback({'type': 'start', 'total': total, 'message': f'Processing {total} render passes...'})
+        except Exception:
+            pass
+
+        durations: List[float] = []
         for idx, pass_idx in enumerate(ordered_indices):
             widget = render_pass_widgets[pass_idx]
-            progress_msg = f"Pass {idx+1}/{len(ordered_indices)}"
+            pass_index = idx + 1
+            # wrapper to translate inner textual messages into structured pass messages
+            def _inner_progress(msg_str, _pi=pass_index, _tot=total, _w=widget):
+                try:
+                    if progress_callback:
+                        progress_callback({'type': 'pass_message', 'index': _pi, 'total': _tot, 'pass': getattr(_w, 'renderpass_type', ''), 'message': msg_str})
+                except Exception:
+                    # swallow progress errors
+                    pass
+
+            start_t = time.time()
             try:
-                run_render_pass(widget, slot_table,
-                                lambda msg: progress_callback(f"{progress_msg}: {msg}") if progress_callback else None)
+                run_render_pass(widget, slot_table, _inner_progress)
             except Exception as e:
-                error_msg = f"Error in pass {idx+1} ({widget.renderpass_type}): {str(e)}"
-                if progress_callback:
-                    progress_callback(error_msg)
+                error_msg = f"Error in pass {pass_index} ({widget.renderpass_type}): {str(e)}"
+                try:
+                    if progress_callback:
+                        progress_callback({'type': 'error', 'index': pass_index, 'total': total, 'message': error_msg})
+                except Exception:
+                    pass
                 raise RuntimeError(error_msg)
-        if progress_callback:
-            progress_callback("All render passes completed successfully")
+            elapsed = max(0.0, time.time() - start_t)
+            durations.append(elapsed)
+
+            # Compute simple ETA using average of completed durations
+            try:
+                avg = sum(durations) / len(durations)
+                remaining = total - pass_index
+                eta = avg * remaining
+                percent = int((pass_index / total) * 100)
+                if progress_callback:
+                    progress_callback({'type': 'progress', 'index': pass_index, 'total': total, 'percent': percent, 'eta': eta, 'message': f'Completed {pass_index}/{total} passes'})
+            except Exception:
+                try:
+                    if progress_callback:
+                        progress_callback({'type': 'progress', 'index': pass_index, 'total': total, 'percent': int((pass_index / total) * 100), 'eta': None, 'message': f'Completed {pass_index}/{total} passes'})
+                except Exception:
+                    pass
+
+        try:
+            if progress_callback:
+                progress_callback({'type': 'done', 'total': total, 'message': 'All render passes completed successfully'})
+        except Exception:
+            pass
     except ValueError as e:
         error_msg = f"Dependency error: {str(e)}"
         if progress_callback:
@@ -634,3 +898,83 @@ def validate_render_pipeline(gui_instance: 'GUI') -> List[str]:
             elif slot == "slot0":
                 # slot0 is always available, so no issue to report
                 pass
+    return issues
+
+
+def visualize_pipeline(gui_instance: 'GUI', out_dot: Optional[str] = None, out_png: Optional[str] = None) -> str:
+    """Generate a DOT representation of the current render pipeline and
+    optionally render it to PNG using Graphviz `dot` if `out_png` is provided.
+
+    Returns the path to the written DOT file.
+    """
+    lw = gui_instance.listWidget.list_widget
+    render_pass_widgets: List[RenderPassWidget] = []
+    for i in range(lw.count()):
+        widget = lw.itemWidget(lw.item(i))
+        render_pass_widgets.append(widget)
+
+    nodes: List[str] = []
+    edges: List[str] = []
+
+    # create slot nodes for any referenced slots
+    referenced_slots = set()
+    for idx, w in enumerate(render_pass_widgets):
+        for s in getattr(w, 'selectedInputs', []):
+            if s is not None:
+                try:
+                    referenced_slots.add(Slot.from_value(s).value)
+                except Exception:
+                    referenced_slots.add(s)
+        out = getattr(w, 'selectedOutput', None)
+        if out is not None:
+            try:
+                referenced_slots.add(Slot.from_value(out).value)
+            except Exception:
+                referenced_slots.add(out)
+
+    for slot in sorted(referenced_slots):
+        nodes.append(f'"{slot}" [shape=oval, style=filled, fillcolor="#f0f0f0"];')
+
+    for idx, w in enumerate(render_pass_widgets):
+        pname = f'P{idx+1}'
+        label = getattr(w, 'renderpass_type', f'Pass {idx+1}')
+        nodes.append(f'"{pname}" [shape=box, style=filled, fillcolor="#d0e1f9", label="{label}"];')
+        # edges from input slots -> pass
+        for s in getattr(w, 'selectedInputs', []):
+            if s is None:
+                continue
+            try:
+                sk = Slot.from_value(s).value
+            except Exception:
+                sk = s
+            edges.append(f'"{sk}" -> "{pname}";')
+        # edge from pass -> output slot
+        out = getattr(w, 'selectedOutput', None)
+        if out is not None:
+            try:
+                ok = Slot.from_value(out).value
+            except Exception:
+                ok = out
+            edges.append(f'"{pname}" -> "{ok}";')
+
+    dot_lines = ['digraph pipeline {', '  rankdir=LR;', '  node [fontname="Helvetica"];']
+    dot_lines.extend('  ' + n for n in nodes)
+    dot_lines.extend('  ' + e for e in edges)
+    dot_lines.append('}')
+
+    if not out_dot:
+        out_dot = os.path.join('saved', 'pipeline.dot')
+    os.makedirs(os.path.dirname(out_dot), exist_ok=True)
+    with open(out_dot, 'w', encoding='utf-8') as f:
+        f.write('\n'.join(dot_lines))
+
+    # Try to render PNG if requested and `dot` is available
+    if out_png:
+        try:
+            import subprocess
+            subprocess.run(['dot', '-Tpng', out_dot, '-o', out_png], check=True)
+        except Exception:
+            # Ignore rendering errors; DOT file is still written
+            pass
+
+    return out_dot

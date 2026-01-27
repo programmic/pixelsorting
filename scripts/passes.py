@@ -20,10 +20,10 @@ from PIL import Image
 from tqdm import tqdm
 from enum import Enum
 
-import converters as converters
-from timing import timing
+from . import converters
+from .timing import timing
 
-def ensure_rgba(img: Image.Image) -> Image.Image: #globalignore
+def _ensure_rgba(img: Image.Image) -> Image.Image: #globalignore
     """Ensure image is in RGBA mode, preserving alpha if present."""
     if img.mode == 'RGBA':
         return img
@@ -38,7 +38,7 @@ def ensure_rgba(img: Image.Image) -> Image.Image: #globalignore
         # Handle other modes
         return img.convert('RGBA')
 
-def get_pixel_rgba(pixel: Union[int, Tuple[int, ...]]) -> Tuple[int, int, int, int]: #globalignore
+def _get_pixel_rgba(pixel: Union[int, Tuple[int, ...]]) -> Tuple[int, int, int, int]: #globalignore
     """Get RGBA values from pixel, handling different modes."""
     if isinstance(pixel, int):
         # Grayscale
@@ -54,7 +54,7 @@ def get_pixel_rgba(pixel: Union[int, Tuple[int, ...]]) -> Tuple[int, int, int, i
         # Fallback
         return (0, 0, 0, 255)
 
-def put_pixel_rgba(img: Image.Image, x: int, y: int, rgba: Tuple[int, int, int, int]) -> None: #globalignore
+def _put_pixel_rgba(img: Image.Image, x: int, y: int, rgba: Tuple[int, int, int, int]) -> None: #globalignore
     """Put RGBA pixel, handling different image modes."""
     mode = img.mode
     if mode == 'RGBA':
@@ -70,7 +70,7 @@ def put_pixel_rgba(img: Image.Image, x: int, y: int, rgba: Tuple[int, int, int, 
         img.putpixel((x, y), rgba[:3])
 
 @contextlib.contextmanager
-def suppress_output(): #globalignore
+def _suppress_output(): #globalignore
     with open(os.devnull, 'w') as devnull:
         old_stdout = sys.stdout
         old_stderr = sys.stderr
@@ -252,7 +252,8 @@ def wrap_sort(img: Image.Image,
               vSplitting: bool,
               flipHorz: bool,
               flipVert: bool,
-              rotate: str
+              rotate: str,
+              progress: Optional[callable] = None
               ) -> Image.Image:
     """
     Wrap sort function that translates UI settings to backend sort parameters.
@@ -279,14 +280,26 @@ def wrap_sort(img: Image.Image,
     mask = None
     
     # Call the actual sort function with translated parameters, including vSplitting
-    return sort(img, mode, vSplitting=vSplitting, flip_dir=flip_dir, rotate=rotate_bool, mask=mask)
+    try:
+        if progress:
+            progress({'percent': 0, 'message': 'Starting sort'})
+    except Exception:
+        pass
+    out = sort(img, mode, vSplitting=vSplitting, flip_dir=flip_dir, rotate=rotate_bool, mask=mask, progress=progress)
+    try:
+        if progress:
+            progress({'percent': 100, 'message': 'Sort completed'})
+    except Exception:
+        pass
+    return out
 
 def sort(img: Image.Image,
          mode: str = "lum",
          vSplitting: bool = True,
          flip_dir: bool = False,
          rotate: bool = True,
-         mask: Optional[Image.Image] = None
+         mask: Optional[Image.Image] = None,
+         progress: Optional[callable] = None
          ) -> Image.Image: #globalignore
     # Generate chunks from mask if provided, otherwise sort the whole image
     if mask:
@@ -361,8 +374,15 @@ def sort(img: Image.Image,
         t.start()
         threads.append(t)
 
-    for t in tqdm(threads, desc="Waiting for chunks to finish"):
+    total_chunks = len(threads) if threads else 1
+    for i, t in enumerate(threads):
         t.join()
+        try:
+            if progress:
+                pct = int(((i + 1) / total_chunks) * 100)
+                progress({'percent': pct, 'message': f'Chunk {i+1}/{total_chunks}'})
+        except Exception:
+            pass
 
     if rotate:
         out = out.rotate(-90, expand=True)
@@ -371,7 +391,7 @@ def sort(img: Image.Image,
 
 @timing
 def blur_box(img: Image.Image, kernel: int, num_threads: int = 64) -> Image.Image: #globalignore
-    img_rgba = ensure_rgba(img)
+    img_rgba = _ensure_rgba(img)
     width, height = img.size
     original_pixels = img_rgba.load()
     output = Image.new("RGBA", img.size)
@@ -434,7 +454,7 @@ def blur_box_gpu(img: Image.Image, blur_kernel: int) -> Image.Image: #globaligno
         with open(shader_path, "r", encoding="utf-8") as f:
             program_src = f.read()
 
-        with suppress_output():
+        with _suppress_output():
             program = cl.Program(ctx, program_src).build()
 
         # Eingabe & Ausgabe-Puffer
@@ -464,7 +484,7 @@ def blur_box_gpu(img: Image.Image, blur_kernel: int) -> Image.Image: #globaligno
 def blur_gaussian(img: Image.Image, kernel: int, sigma: float = 1.0, num_threads: int = 64) -> Image.Image: #globalignore
     """Optimized Gaussian blur using separable convolution with NumPy."""
     # Convert to numpy array for faster processing
-    img_rgba = ensure_rgba(img)
+    img_rgba = _ensure_rgba(img)
     img_array = np.array(img_rgba, dtype=np.float32)
     height, width, channels = img_array.shape
     
@@ -509,7 +529,7 @@ def blur_gaussian(img: Image.Image, kernel: int, sigma: float = 1.0, num_threads
 @timing
 def blur_gaussian_fast(img: Image.Image, kernel: int, sigma: float = 1.0) -> Image.Image: #globalignore
     """Highly optimized Gaussian blur using vectorized NumPy operations."""
-    img_rgba = ensure_rgba(img)
+    img_rgba = _ensure_rgba(img)
     img_array = np.array(img_rgba, dtype=np.float32)
     
     # Generate 1D Gaussian kernel
@@ -627,23 +647,32 @@ def __blur_gaussian_1d(img: Image.Image, kernel: int, sigma: float = None, num_p
     combined = np.vstack(final_array).clip(0, 255).astype(np.uint8)
     return Image.fromarray(combined)
 
-def subtract_images(i1: Image.Image, i2: Image.Image) -> Image.Image:
-    if i1.size != i2.size:
+def subtract_images(img1: Image.Image, img2: Image.Image) -> Image.Image:
+    if img1.size != img2.size:
         raise ValueError("Images must be the same size")
 
-    out = i1.copy()
+    # Preserve original mode to convert result back at the end
+    original_mode = img1.mode
 
-    for x in tqdm(range(i1.size[0]), desc="Calculating image delta"):
-        for y in range(i1.size[1]):
-            p1 = i1.getpixel((x, y))
-            p2 = i2.getpixel((x, y))
-            if isinstance(p1, int):  # L mode
-                diff = max(0, p1 - p2)
-                out.putpixel((x, y), diff)
-            else:  # RGB or RGBA
-                diff = tuple(max(0, a - b) for a, b in zip(p1, p2))
-                out.putpixel((x, y), diff)
-    return out
+    # Ensure both images are in the same mode to avoid mixed-type pixels
+    img1_rgba = _ensure_rgba(img1)
+    img2_rgba = _ensure_rgba(img2)
+
+    out = Image.new("RGBA", img1_rgba.size)
+    for x in tqdm(range(img1_rgba.size[0]), desc="Calculating image delta"):
+        for y in range(img1_rgba.size[1]):
+            p1 = img1_rgba.getpixel((x, y))
+            p2 = img2_rgba.getpixel((x, y))
+            # p1 and p2 are now 4-tuples (R,G,B,A)
+            diff_rgb = tuple(max(0, int(a) - int(b)) for a, b in zip(p1[:3], p2[:3]))
+            # Keep result fully opaque (or you could compute alpha difference if desired)
+            out.putpixel((x, y), (diff_rgb[0], diff_rgb[1], diff_rgb[2], 255))
+
+    # Convert back to the original mode for compatibility with callers
+    if original_mode == "RGBA":
+        return out
+    else:
+        return out.convert(original_mode)
 
 def adjust_brightness(img: Image.Image, gamma: float) -> Image.Image: #globalignore
     out = img.copy()
@@ -746,17 +775,31 @@ def kuwahara_wrapper(
         kernel: int,
         regions: int = 8,
         isAnisotropic: bool = False,
-        stylePapari: bool = False
+        stylePapari: bool = False,
+        progress: Optional[callable] = None
         ) -> Image.Image:
+    """Wrapper for Kuwahara that reports simple start/finish progress."""
+    try:
+        if progress:
+            progress({'percent': 0, 'message': 'Starting Kuwahara'})
+    except Exception:
+        pass
     print(f"Running Kuwahara Filter (Kernel: {kernel}, Regions: {regions}, Anisotropic: {isAnisotropic}, Papari Style: {stylePapari})")
     if isAnisotropic:
         if stylePapari:
-            return anisotropic_kuwahara_papari_gpu(img, kernel, regions)
-        else: return anisotropic_kuwahara_gpu(img, kernel, regions)
+            out = anisotropic_kuwahara_papari_gpu(img, kernel, regions)
+        else:
+            out = anisotropic_kuwahara_gpu(img, kernel, regions)
     else:
-        return kuwahara_gpu(img, kernel)
+        out = kuwahara_gpu(img, kernel)
+    try:
+        if progress:
+            progress({'percent': 100, 'message': 'Kuwahara completed'})
+    except Exception:
+        pass
+    return out
 
-def kuwahara(img: Image.Image, kernel: int, num_threads: int = None) -> Image.Image: #globalignore
+def kuwahara(img: Image.Image, kernel: int, num_threads: int = None, progress: Optional[callable] = None) -> Image.Image: #globalignore
     if num_threads is None:
         num_threads = os.cpu_count() or 4
 
@@ -781,9 +824,16 @@ def kuwahara(img: Image.Image, kernel: int, num_threads: int = None) -> Image.Im
             for y_start, y_end in ranges
         ]
 
-        for i, future in enumerate(tqdm(futures, desc="Combining thread results")):
+        # collect results and report progress per-chunk
+        for i, future in enumerate(futures):
             result_chunk = future.result()
             out[ranges[i][0]:ranges[i][1]] = result_chunk
+            try:
+                if progress:
+                    pct = int(((i + 1) / len(futures)) * 100)
+                    progress({'percent': pct, 'message': f'Kuwahara chunk {i+1}/{len(futures)}'})
+            except Exception:
+                pass
 
     out = np.clip(out, 0, 255).astype(np.uint8)
     return Image.fromarray(out)
@@ -818,7 +868,7 @@ def kuwahara_gpu(img: Image.Image, kernel_size: float) -> Image.Image: #globalig
             program_src = f.read()
 
         with opencl_context() as (ctx, queue):
-            with suppress_output():
+            with _suppress_output():
                 program = cl.Program(ctx, program_src).build()
 
             flat_input = img_np.flatten()
@@ -840,6 +890,16 @@ def kuwahara_gpu(img: Image.Image, kernel_size: float) -> Image.Image: #globalig
 
             output_img = output_np.reshape((height, width, channels))
             output_img = np.clip(output_img, 0, 255).astype(np.uint8)
+            # If the GPU kernel produced an all-black image (common failure mode
+            # for some OpenCL drivers/kernels), fall back to the CPU implementation.
+            try:
+                if np.count_nonzero(output_img) == 0:
+                    print("kuwahara_gpu: GPU produced all-black output, falling back to CPU implementation.")
+                    return _kuwahara_cpu_fallback(img, kernel_size)
+            except Exception:
+                # If anything goes wrong with the sanity check, proceed to return
+                # the GPU result to avoid masking other issues.
+                pass
             return Image.fromarray(output_img, 'RGB')
     except Exception as e:
         print(f"OpenCL error: {str(e)}. Falling back to CPU implementation.")
@@ -873,7 +933,7 @@ def anisotropic_kuwahara_gpu(img: Image.Image, kernel_size: float, regions: int 
             program_src = f.read()
 
         with opencl_context() as (ctx, queue):
-            with suppress_output():
+            with _suppress_output():
                 program = cl.Program(ctx, program_src).build()
 
             flat_input = img_np.flatten()
@@ -895,6 +955,13 @@ def anisotropic_kuwahara_gpu(img: Image.Image, kernel_size: float, regions: int 
 
             output_img = output_np.reshape((height, width, channels))
             output_img = np.clip(output_img, 0, 255).astype(np.uint8)
+            # Sanity check: if GPU returned all zeros, fallback to CPU
+            try:
+                if np.count_nonzero(output_img) == 0:
+                    print("anisotropic_kuwahara_gpu: GPU produced all-black output, falling back to CPU implementation.")
+                    return _cpu_fallback(img, kernel_size, regions)
+            except Exception:
+                pass
             return Image.fromarray(output_img, 'RGB')
     except Exception as e:
         print(f"OpenCL error: {str(e)}. Falling back to CPU implementation.")
@@ -985,7 +1052,7 @@ def anisotropic_kuwahara_papari_gpu( #globalignore
     with open(cl_path, "r", encoding="utf-8") as f:
         prg_src = f.read()
 
-    with suppress_output():
+    with _suppress_output():
         program = cl.Program(ctx, prg_src).build()
 
     mf = cl.mem_flags
@@ -1012,6 +1079,15 @@ def anisotropic_kuwahara_papari_gpu( #globalignore
 
     out = out_flat.reshape((H, W, C))
     out = np.clip(out, 0, 255).astype(np.uint8)
+    # If GPU output is entirely black, that usually indicates a kernel or
+    # transfer problem — fall back to the CPU implementation which is more
+    # robust across environments.
+    try:
+        if np.count_nonzero(out) == 0:
+            print("anisotropic_kuwahara_papari_gpu: GPU produced all-black output, falling back to CPU implementation.")
+            return kuwahara(img, radius)
+    except Exception:
+        pass
     return Image.fromarray(out, mode='RGB')
 
 def kuwahara_grays(img: Image.Image, kernel: int) -> Image.Image: #globalignore
@@ -1143,7 +1219,7 @@ def blur(img: Image.Image, blur_type: str, blur_kernel: int) -> Image.Image: #gl
     elif    blur_type == "Gaussian"  : return blur_gaussian( img, kernel=int(blur_kernel))
     else                            : return blur_box_gpu(  img, kernel=int(blur_kernel))
 
-def invert(img: Image.Image, invert_type: str, impact_factor: float) -> Image.Image:
+def invert(img: Image.Image, invert_type: str, impact_factor: float = 1.0) -> Image.Image:
     """
     Inverts image colors based on specified type and impact factor.
     
@@ -1226,8 +1302,8 @@ def alpha_over(img1: Image.Image, img2: Image.Image) -> Image.Image:
             raise ValueError("Both images must be provided")
         
         # Ensure both images are in RGBA mode
-        img1_rgba = ensure_rgba(img1)
-        img2_rgba = ensure_rgba(img2)
+        img1_rgba = _ensure_rgba(img1)
+        img2_rgba = _ensure_rgba(img2)
         
         # Handle size mismatches
         if img1_rgba.size != img2_rgba.size:
@@ -1251,8 +1327,8 @@ def difference(img1: Image.Image, img2: Image.Image) -> Image.Image:
     if img1 is None or img2 is None:
         raise ValueError("Both images must be provided")
     
-    img1_rgba = ensure_rgba(img1)
-    img2_rgba = ensure_rgba(img2)
+    img1_rgba = _ensure_rgba(img1)
+    img2_rgba = _ensure_rgba(img2)
 
     if img1_rgba.size != img2_rgba.size:
         print(f"Image size mismatch: {img1_rgba.size} vs {img2_rgba.size}. Resizing second image.")
@@ -1271,8 +1347,8 @@ def maxAdd(img1: Image.Image, img2: Image.Image) -> Image.Image:
     if img1 is None or img2 is None:
         raise ValueError("Both images must be provided")
     
-    img1_rgba = ensure_rgba(img1)
-    img2_rgba = ensure_rgba(img2)
+    img1_rgba = _ensure_rgba(img1)
+    img2_rgba = _ensure_rgba(img2)
 
     if img1_rgba.size != img2_rgba.size:
         print(f"Image size mismatch: {img1_rgba.size} vs {img2_rgba.size}. Resizing second image.")
@@ -1302,7 +1378,7 @@ def multiply(img: Image.Image, factor: float, allowValueOverflow:bool = False) -
     if img is None:
         raise ValueError("Image must be provided")
     
-    img_rgba = ensure_rgba(img)
+    img_rgba = _ensure_rgba(img)
     out = Image.new("RGBA", img_rgba.size)
 
     for x in range(img_rgba.size[0]):
@@ -1502,7 +1578,7 @@ def meanShiftClusteringGPU(
             program_src = f.read()
 
         with opencl_context() as (ctx, queue):
-            with suppress_output():
+            with _suppress_output():
                 program = cl.Program(ctx, program_src).build()
 
             flat_input = img_np.flatten()
@@ -1541,6 +1617,7 @@ def dither(
     method: DitherMethods | str,
     palette_selection: str = "median_cut",
     palette: Optional[list] = None,
+    progress: Optional[callable] = None,
 ) -> Image.Image:
     """Apply dithering and reduce colors.
 
@@ -1645,7 +1722,7 @@ def dither(
             centers = centers[:num_colors]
 
     # If we are using median_cut, delegate to PIL (it supports dithering)
-    if ps == "median_cut":
+    if ps.lower() == "median_cut":
         try:
             dither_flag = Image.FLOYDSTEINBERG if method == DitherMethods.FLOYD_STEINBERG else Image.NONE
             qimg = result_img.quantize(colors=num_colors, method=Image.MEDIANCUT, dither=dither_flag)
@@ -1656,9 +1733,9 @@ def dither(
     # If centers still None, compute according to palette_selection
     img_uint8 = np.clip(img_np, 0, 255).astype(np.uint8)
     if centers is None:
-        if ps in ("most_represented", "represented", "frequent"):
+        if ps.lower() in ("most_represented", "represented", "frequent"):
             centers = _select_most_represented(img_uint8, num_colors)
-        elif ps in ("most_different", "different", "diverse", "farthest"):
+        elif ps.lower() in ("most_different", "different", "diverse", "farthest"):
             centers = _select_most_different(img_uint8, num_colors)
         else:
             raise ValueError(f"Unknown palette_selection: {palette_selection}")
@@ -1671,10 +1748,10 @@ def dither(
     # palette-aware diffusion which maps pixels to the nearest center
     # during scanning and diffuses the resulting error.
     if method == DitherMethods.FLOYD_STEINBERG:
-        out_np = __dither_floyd_steinberg(img_np.copy(), num_colors, centers)
+        out_np = __dither_floyd_steinberg(img_np.copy(), num_colors, centers, progress=progress)
         return Image.fromarray(out_np, 'RGB')
     elif method == DitherMethods.ATKINSON:
-        out_np = __dither_atkinson(img_np.copy(), num_colors, centers)
+        out_np = __dither_atkinson(img_np.copy(), num_colors, centers, progress=progress)
         return Image.fromarray(out_np, 'RGB')
 
     # Fallback: simple nearest-center mapping (no error diffusion)
@@ -1689,7 +1766,7 @@ def dither(
 
     return Image.fromarray(quant_pixels, 'RGB')
 
-def __dither_floyd_steinberg(img_np: np.ndarray, num_colors: int, centers: Optional[np.ndarray] = None) -> np.ndarray:
+def __dither_floyd_steinberg(img_np: np.ndarray, num_colors: int, centers: Optional[np.ndarray] = None, progress: Optional[callable] = None) -> np.ndarray:
     height, width, channels = img_np.shape
 
     if centers is None:
@@ -1709,6 +1786,14 @@ def __dither_floyd_steinberg(img_np: np.ndarray, num_colors: int, centers: Optio
                     img_np[y + 1, x] += error * 5 / 16
                 if x + 1 < width and y + 1 < height:
                     img_np[y + 1, x + 1] += error * 1 / 16
+
+            # report progress per processed row
+            try:
+                if progress:
+                    pct = int(((y + 1) / height) * 100)
+                    progress({'percent': pct, 'message': f'Dithering row {y+1}/{height}'})
+            except Exception:
+                pass
 
         return np.clip(img_np, 0, 255).astype(np.uint8)
 
@@ -1736,9 +1821,17 @@ def __dither_floyd_steinberg(img_np: np.ndarray, num_colors: int, centers: Optio
             if x + 1 < width and y + 1 < height:
                 img[y + 1, x + 1] += error * 1 / 16
 
+        # progress per row for palette-aware diffusion
+        try:
+            if progress:
+                pct = int(((y + 1) / height) * 100)
+                progress({'percent': pct, 'message': f'Dithering row {y+1}/{height}'})
+        except Exception:
+            pass
+
     return np.clip(img, 0, 255).astype(np.uint8)
 
-def __dither_atkinson(img_np: np.ndarray, num_colors: int, centers: Optional[np.ndarray] = None) -> np.ndarray:
+def __dither_atkinson(img_np: np.ndarray, num_colors: int, centers: Optional[np.ndarray] = None, progress: Optional[callable] = None) -> np.ndarray:
     height, width, _ = img_np.shape
 
     if centers is None:
@@ -1762,6 +1855,14 @@ def __dither_atkinson(img_np: np.ndarray, num_colors: int, centers: Optional[np.
                     img_np[y + 1, x + 1] += error * 1 / 8
                 if y + 2 < height:
                     img_np[y + 2, x] += error * 1 / 8
+
+            # report progress per processed row
+            try:
+                if progress:
+                    pct = int(((y + 1) / height) * 100)
+                    progress({'percent': pct, 'message': f'Dithering row {y+1}/{height}'})
+            except Exception:
+                pass
 
         return np.clip(img_np, 0, 255).astype(np.uint8)
 
@@ -1792,11 +1893,20 @@ def __dither_atkinson(img_np: np.ndarray, num_colors: int, centers: Optional[np.
             if y + 2 < height:
                 img[y + 2, x] += error * 1 / 8
 
+        # progress per row for palette-aware Atkinson diffusion
+        try:
+            if progress:
+                pct = int(((y + 1) / height) * 100)
+                progress({'percent': pct, 'message': f'Dithering row {y+1}/{height}'})
+        except Exception:
+            pass
+
     return np.clip(img, 0, 255).astype(np.uint8)
 
 def quantize(
         img: Image.Image,
         num_colors: int = 16,
+        progress: Optional[callable] = None,
     ) -> Image.Image:
     if not 2 < num_colors <= 256:
         raise ValueError("Number of colors must be at least 3 and at most 256")
@@ -1827,7 +1937,7 @@ def quantize(
     # K-Means iterations (vectorized)
     max_iter = 30
     tol = 1e-2
-    for _ in range(max_iter):
+    for it in range(max_iter):
         # assign
         dists = np.sum((pixels[:, None, :] - centers[None, :, :]) ** 2, axis=2)  # shape (N, K)
         labels = np.argmin(dists, axis=1)
@@ -1844,6 +1954,14 @@ def quantize(
                 new_centers[k] = pixels[rng.integers(0, n)]
         shift = np.linalg.norm(new_centers - centers, axis=1).sum()
         centers = new_centers
+        # report KMeans progress
+        try:
+            if progress:
+                pct = int(((it + 1) / max_iter) * 100)
+                progress({'percent': pct, 'message': f'KMeans iter {it+1}/{max_iter}'})
+        except Exception:
+            pass
+
         if shift <= tol:
             break
 
@@ -1875,7 +1993,28 @@ def reduce_size(
     # Parse resolution
     if isinstance(resolution, str):
         try:
-            target_w, target_h = map(int, resolution.lower().split("x"))
+            res_l = resolution.lower()
+            if res_l.isdigit():
+                target_w = target_h = int(res_l)
+            else:
+                if "x" in res_l:
+                    parts = res_l.split("x")
+                elif "," in res_l:
+                    parts = res_l.split(",")
+                elif " " in res_l:
+                    parts = res_l.split(" ")
+                elif "(" in res_l and ")" in res_l:
+                    res_l = res_l.replace("(", "").replace(")", "")
+                    parts = res_l.split(",")
+                elif "*" in res_l:
+                    parts = res_l.split("*")
+                elif "-" in res_l:
+                    parts = res_l.split("-")
+                else:
+                    raise ValueError("resolution must be like '1080x1920' or (w,h)")
+                if len(parts) != 2:
+                    raise ValueError("resolution must be like '1080x1920' or (w,h)")
+                target_w, target_h = map(int, parts)
         except Exception as e:
             raise ValueError("resolution must be like '1080x1920' or (w,h)") from e
     elif isinstance(resolution, tuple) and len(resolution) == 2:
@@ -1962,6 +2101,7 @@ def find_edges(
     low_threshold: Optional[float] = None,
     high_threshold: Optional[float] = None,
     type: edge_detection_types | str = edge_detection_types.SOBEL,
+    progress: Optional[callable] = None,
 ) -> Image.Image:
     """
     Detect edges in the image using one of the following methods:
@@ -2046,6 +2186,12 @@ def find_edges(
                 out[y, x] = np.sum(padded_v[y:y + 2 * radius + 1, x] * kernel_1d)
         return out
 
+    if progress:
+        try:
+            progress({'percent': 0, 'message': 'Starting edge detection'})
+        except Exception:
+            pass
+
     if type == edge_detection_types.SOBEL:
         # Sobel kernels
         kx = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], dtype=np.float32)
@@ -2055,6 +2201,11 @@ def find_edges(
         edges = np.hypot(gx, gy)
         maxv = edges.max() if edges.max() != 0 else 1.0
         edges = (edges / maxv * 255.0).astype(np.uint8)
+        if progress:
+            try:
+                progress({'percent': 100, 'message': 'Sobel edge detection complete'})
+            except Exception:
+                pass
         return Image.fromarray(edges, mode='L')
 
     elif type == edge_detection_types.CANNY:
@@ -2065,12 +2216,22 @@ def find_edges(
         radius = max(1, int(3.0 * sigma))
         gk = _gaussian_kernel1d(radius, sigma)
         smooth = _separable_conv(img_np, gk)
+        if progress:
+            try:
+                progress({'percent': 10, 'message': 'Smoothed image'})
+            except Exception:
+                pass
 
         # gradients
         kx = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], dtype=np.float32)
         ky = np.array([[1, 2, 1], [0, 0, 0], [-1, -2, -1]], dtype=np.float32)
         gx = _convolve2d(smooth, kx)
         gy = _convolve2d(smooth, ky)
+        if progress:
+            try:
+                progress({'percent': 30, 'message': 'Computed gradients'})
+            except Exception:
+                pass
         mag = np.hypot(gx, gy)
         # Normalize magnitude to 0..255 for thresholding
         mag_max = mag.max() if mag.max() != 0 else 1.0
@@ -2083,6 +2244,13 @@ def find_edges(
         H, W = mag.shape
         nms = np.zeros_like(mag_n, dtype=np.float32)
         for y in range(1, H - 1):
+            # report NMS progress periodically
+            if progress and (y % max(1, (H // 25)) == 0):
+                try:
+                    pct = 30 + int(((y - 1) / max(1, (H - 2))) * 50)
+                    progress({'percent': pct, 'message': f'NMS {y}/{H}'})
+                except Exception:
+                    pass
             for x in range(1, W - 1):
                 a = ang[y, x]
                 m = mag_n[y, x]
@@ -2129,7 +2297,19 @@ def find_edges(
                         edges_bool[ny, nx] = True
                         stack.append((ny, nx))
 
+        if progress:
+            try:
+                progress({'percent': 85, 'message': 'NMS complete, performing hysteresis'})
+            except Exception:
+                pass
+
         edges_uint8 = (edges_bool.astype(np.uint8) * 255)
+        if progress:
+            try:
+                progress({'percent': 100, 'message': 'Canny edge detection complete'})
+            except Exception:
+                pass
+
         return Image.fromarray(edges_uint8, mode='L')
 
     elif type == edge_detection_types.DOG:

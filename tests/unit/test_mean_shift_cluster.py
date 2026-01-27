@@ -5,7 +5,7 @@ import os
 from PIL import Image
 
 # Ensure scripts is importable
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../scripts'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
 from tests.base_test import ImageTestCase
 from scripts import passes

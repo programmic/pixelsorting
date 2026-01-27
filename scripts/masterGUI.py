@@ -5,6 +5,7 @@ import sys
 import subprocess
 from PySide6.QtWidgets import *
 from PySide6.QtCore import Qt, QThread, QTimer, QObject, QEvent
+from PySide6.QtGui import QPixmap
 from superqt import QSearchableListWidget
 from utils import get_output_dir
 
@@ -130,14 +131,15 @@ class GUI(QWidget):
 
         # Load renderPasses.json to get available passes
         try:
-            # Get the directory where this script is located
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            # Go up one level to project root
-            project_root = os.path.dirname(script_dir)
-            json_path = os.path.join(project_root, 'renderPasses.json')
-            with open(json_path, 'r', encoding='utf-8') as f:
-                self.render_passes_config = json.load(f)
-                print(f"Successfully loaded {len(self.render_passes_config)} render passes from JSON")
+            # Use centralized loader so all modules share the same cached config
+            from renderpasses_tools import load_renderpasses_config
+            self.render_passes_config = load_renderpasses_config()
+            print(f"Successfully loaded {len(self.render_passes_config)} render passes from JSON")
+            # expose to RenderPassWidget so other code can resolve settings consistently
+            try:
+                RenderPassWidget._settings_cache = self.render_passes_config
+            except Exception:
+                pass
         except Exception as e:
             print(f"Error loading renderPasses.json: {e}")
             self.render_passes_config = {}
@@ -194,6 +196,13 @@ class GUI(QWidget):
         self.status_label = QLabel()
         self.status_label.hide()
         left_center.addWidget(self.status_label)
+
+        # Per-pass progress bar (hidden until a pass reports inner progress)
+        self.pass_progress_bar = QProgressBar()
+        self.pass_progress_bar.setMinimum(0)
+        self.pass_progress_bar.setMaximum(100)
+        self.pass_progress_bar.hide()
+        left_center.addWidget(self.pass_progress_bar)
         
         # Add Run Rendering and Output Folder buttons
         button_layout = QHBoxLayout()
@@ -207,6 +216,13 @@ class GUI(QWidget):
         button_layout.addWidget(self.open_output_button)
         
         left_center.addLayout(button_layout)
+
+        # Visualization button
+        viz_layout = QHBoxLayout()
+        self.visualize_button = QPushButton("Visualize Pipeline")
+        self.visualize_button.clicked.connect(self.visualize_pipeline_action)
+        viz_layout.addWidget(self.visualize_button)
+        left_center.addLayout(viz_layout)
 
         # Add Save/Load buttons
         button_layout = QHBoxLayout()
@@ -397,6 +413,33 @@ class GUI(QWidget):
                 self.updateSlotUsage()
                 break
 
+    def visualize_pipeline_action(self):
+        """Generate DOT and PNG (if possible) and show the PNG in a simple dialog."""
+        try:
+            out_dot = os.path.join('saved', 'pipeline.dot')
+            out_png = os.path.join('saved', 'pipeline.png')
+            renderHook.visualize_pipeline(self, out_dot=out_dot, out_png=out_png)
+            if os.path.exists(out_png):
+                dlg = QDialog(self)
+                dlg.setWindowTitle('Pipeline Visualization')
+                layout = QVBoxLayout(dlg)
+                lbl = QLabel()
+                pix = QPixmap(out_png)
+                if pix.isNull():
+                    lbl.setText(f'Could not load rendered image: {out_png}')
+                else:
+                    lbl.setPixmap(pix)
+                layout.addWidget(lbl)
+                btn = QPushButton('Close')
+                btn.clicked.connect(dlg.accept)
+                layout.addWidget(btn)
+                dlg.resize(800, 600)
+                dlg.exec_()
+            else:
+                self.show_message(f"DOT written to {out_dot}. Install Graphviz to render PNG.")
+        except Exception as e:
+            self.show_message(f"Visualization failed: {e}")
+
     def import_image(self):
         """Handle importing a new image."""
         file_dialog = QFileDialog()
@@ -536,7 +579,16 @@ class GUI(QWidget):
             
         # Disable the run button during rendering
         self.run_button.setEnabled(False)
+        # Prepare determinate progress UI
+        self.progress_bar.setMaximum(100)
+        self.progress_bar.setValue(0)
         self.progress_bar.show()
+        # hide per-pass bar until inner progress arrives
+        try:
+            self.pass_progress_bar.setValue(0)
+            self.pass_progress_bar.hide()
+        except Exception:
+            pass
         self.status_label.show()
         self.status_label.setText("Initializing render...")
 
@@ -560,20 +612,102 @@ class GUI(QWidget):
         self.render_thread.start()
         
     def updateProgress(self, message):
-        self.status_label.setText(message)
+        # Accept either legacy string messages or structured dicts
+        try:
+            if isinstance(message, dict):
+                mtype = message.get('type')
+                if mtype == 'start':
+                    total = message.get('total')
+                    self.status_label.setText(message.get('message', 'Starting render...'))
+                    self.progress_bar.setValue(0)
+                elif mtype == 'pass_message':
+                    idx = message.get('index')
+                    tot = message.get('total')
+                    pname = message.get('pass')
+                    msg = message.get('message')
+                    self.status_label.setText(f"Pass {idx}/{tot}: {pname} — {msg}")
+                    # reset per-pass progress when a new pass starts
+                    try:
+                        self.pass_progress_bar.setValue(0)
+                        self.pass_progress_bar.show()
+                    except Exception:
+                        pass
+                elif mtype == 'progress':
+                    pct = int(message.get('percent') or 0)
+                    eta = message.get('eta')
+                    msg = message.get('message') or ''
+                    self.progress_bar.setValue(max(0, min(100, pct)))
+                    eta_str = ''
+                    if eta is not None:
+                        # Format ETA as mm:ss or seconds
+                        try:
+                            secs = int(eta)
+                            if secs >= 60:
+                                eta_str = f' — ETA {secs//60}m {secs%60}s'
+                            else:
+                                eta_str = f' — ETA {secs}s'
+                        except Exception:
+                            eta_str = ''
+                    self.status_label.setText(f"{msg}{eta_str}")
+                elif mtype == 'done':
+                    self.progress_bar.setValue(100)
+                    try:
+                        self.pass_progress_bar.setValue(100)
+                    except Exception:
+                        pass
+                    self.status_label.setText(message.get('message', 'Render completed'))
+                elif mtype == 'error':
+                    self.status_label.setText(message.get('message', 'Error during render'))
+                    try:
+                        self.pass_progress_bar.hide()
+                    except Exception:
+                        pass
+                else:
+                    # fallback
+                    self.status_label.setText(message.get('message', str(message)))
+            else:
+                self.status_label.setText(str(message))
+        except Exception:
+            # In case of any error formatting the progress, fall back to raw message
+            try:
+                self.status_label.setText(str(message))
+            except Exception:
+                pass
         
     def handleRenderError(self, error_message):
         QMessageBox.critical(self, "Rendering Error", error_message)
         self.progress_bar.hide()
+        try:
+            self.pass_progress_bar.hide()
+        except Exception:
+            pass
         self.status_label.hide()
         self.run_button.setEnabled(True)
         
     def handleRenderFinished(self):
-        self.progress_bar.hide()
+        # Ensure progress shows 100% then hide after a delay
+        try:
+            self.progress_bar.setValue(100)
+        except Exception:
+            pass
         self.status_label.setText("Render completed successfully!")
         self.run_button.setEnabled(True)
-        # Hide status after 3 seconds
-        QTimer.singleShot(3000, self.status_label.hide)
+        # Hide progress and status after a short delay
+        def _hide():
+            try:
+                self.progress_bar.hide()
+            except Exception:
+                pass
+            try:
+                self.status_label.hide()
+            except Exception:
+                pass
+            try:
+                self.pass_progress_bar.hide()
+            except Exception:
+                pass
+
+        QTimer.singleShot(3000, _hide)
 
     def select_image(self):
         file_paths, _ = QFileDialog.getOpenFileNames(

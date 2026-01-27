@@ -350,7 +350,15 @@ class ModernSlotTableWidget(QWidget):
             self.slot_images[slot_name] = image
         else:
             self.slot_images[slot_name] = image
-            
+        # Update internal image cache entry
+        try:
+            import renderHook
+            if not hasattr(self, '_image_cache') or self._image_cache is None:
+                self._image_cache = {}
+            img_hash = renderHook._compute_image_hash(image)
+            self._image_cache[slot_name] = {'image_hash': img_hash, 'pass_hash': None, 'image': image}
+        except Exception:
+            pass
         # Clear source info since we have actual image
         if slot_name in self.slot_sources:
             del self.slot_sources[slot_name]

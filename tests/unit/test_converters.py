@@ -4,7 +4,7 @@ import sys
 import os
 
 # Add the scripts directory to the path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../scripts'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
 import scripts.converters as converters
 from tests.base_test import BaseTestCase

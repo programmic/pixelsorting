@@ -8,7 +8,8 @@ if TYPE_CHECKING:
 
 class RenderWorker(QObject):
     finished = Signal()
-    progress = Signal(str)
+    # Emit structured progress payloads (dict) or legacy strings
+    progress = Signal(object)
     error = Signal(str)
 
     def __init__(self, gui_instance: 'GUI'):

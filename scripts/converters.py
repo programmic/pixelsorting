@@ -2,7 +2,7 @@
 
 import colorsys
 
-def convert(v, mode="lum") -> int:
+def convert(v, mode="lum") -> float:
     mode_str = str(mode).lower()
     if mode_str == "lum":
         return get_luminance(v)
@@ -18,7 +18,7 @@ def convert(v, mode="lum") -> int:
         print("ERROR: Unsupported sort mode:", mode)
         raise ValueError(f"Unsupported sort mode: {mode}")
 
-def get_luminance(v) -> int:
+def get_luminance(v) -> float:
     # L = 0.2126 * R + 0.7152 * G + 0.0722 * B
     if len(v) == 3:
         r, g, b = v
@@ -26,7 +26,7 @@ def get_luminance(v) -> int:
         r, g, b, _ = v
     else:
         raise ValueError(f"Invalid input for luminance calculation: {v}. Expected a tuple of length 3 or 4 (RGB or RGBA).")
-    return int(0.2126 * r + 0.7152 * g + 0.0722 * b)
+    return (0.2126 * r + 0.7152 * g + 0.0722 * b)
 
 def get_hue(v) -> int:
     r, g, b = [x / 255.0 for x in v]

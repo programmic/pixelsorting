@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 # Ensure scripts package is importable
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../scripts'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
 from scripts import createSettingsTool
 from scripts import enums

@@ -5,7 +5,7 @@ import os
 from PIL import Image
 
 # Ensure scripts is importable
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../scripts'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
 from tests.base_test import ImageTestCase
 from scripts import passes
@@ -14,23 +14,23 @@ from scripts import passes
 class TestPasses(ImageTestCase):
     def test_ensure_rgba_conversions(self):
         rgb = Image.new('RGB', (2, 2), (10, 20, 30))
-        rgba = passes.ensure_rgba(rgb)
+        rgba = passes._ensure_rgba(rgb)
         self.assertEqual(rgba.mode, 'RGBA')
         self.assertEqual(rgba.getpixel((0, 0)), (10, 20, 30, 255))
 
         gray = Image.new('L', (2, 2), 128)
-        g2 = passes.ensure_rgba(gray)
+        g2 = passes._ensure_rgba(gray)
         self.assertEqual(g2.mode, 'RGBA')
         self.assertEqual(g2.getpixel((0, 0)), (128, 128, 128, 255))
 
     def test_get_put_pixel_rgba(self):
         img = Image.new('RGB', (3, 3), (0, 0, 0))
-        passes.put_pixel_rgba(img, 1, 1, (123, 45, 67, 200))
+        passes._put_pixel_rgba(img, 1, 1, (123, 45, 67, 200))
         self.assertEqual(img.getpixel((1, 1)), (123, 45, 67))
 
         rgba_img = Image.new('RGBA', (2, 2), (1, 2, 3, 4))
-        self.assertEqual(passes.get_pixel_rgba(rgba_img.getpixel((0, 0))), (1, 2, 3, 4))
-        self.assertEqual(passes.get_pixel_rgba(128), (128, 128, 128, 255))
+        self.assertEqual(passes._get_pixel_rgba(rgba_img.getpixel((0, 0))), (1, 2, 3, 4))
+        self.assertEqual(passes._get_pixel_rgba(128), (128, 128, 128, 255))
 
     def test_scale_image_center_and_downscale(self):
         base = Image.new('RGB', (10, 10), (10, 20, 30))

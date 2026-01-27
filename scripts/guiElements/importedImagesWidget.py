@@ -34,6 +34,18 @@ class ImportedImagesListWidget(QListWidget):
         `imported_images` dictionary when available.
         """
         self.setStyleSheet(self.styleSheet().replace("\nQListWidget { border: 2px solid #4caf50; background: #e8f5e9; }", ""))
+        # If this drag originates from this same widget, allow the default
+        # QListWidget internal-move behavior instead of treating it as an
+        # external drop which would create (copy) a new image entry.
+        if event.source() is self:
+            # Let the base class handle internal reordering/moves
+            try:
+                super().dropEvent(event)
+                event.accept()
+            except Exception:
+                event.ignore()
+            return
+
         mime = event.mimeData()
         handled = False
 
@@ -106,6 +118,12 @@ class ImportedImagesListWidget(QListWidget):
         super().__init__(parent)
         self.setDragEnabled(True)
         self.setAcceptDrops(True)  # Enable drop support
+        # Allow internal moves (drag within the list reorders items)
+        try:
+            from PySide6.QtWidgets import QAbstractItemView
+            self.setDragDropMode(QListWidget.InternalMove)
+        except Exception:
+            pass
         # Use per-pixel scrolling for smoother UX
         try:
             from PySide6.QtWidgets import QAbstractItemView
@@ -172,7 +190,9 @@ class ImportedImagesListWidget(QListWidget):
                 scaled_pixmap = pixmap.scaled(32, 32, Qt.KeepAspectRatio, Qt.SmoothTransformation)
                 drag.setPixmap(scaled_pixmap)
                 drag.setHotSpot(QPoint(16, 16))
-                drag.exec_(Qt.CopyAction)
+                # Allow both copy and move; internal moves will be handled
+                # by the list when event.source() == self
+                drag.exec_(Qt.CopyAction | Qt.MoveAction)
 
     def mouseMoveEvent(self, event):
         """Handle preview on hover."""
