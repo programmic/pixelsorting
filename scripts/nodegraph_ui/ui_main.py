@@ -177,9 +177,9 @@ class MainWindow(QMainWindow):
                     return
                 # Collect bounding rect of NodeItem instances
                 try:
-                    from ui_node_item import NodeItem
                     rect = None
                     for item in s.items():
+                        # use the NodeItem class imported at module level
                         if isinstance(item, NodeItem):
                             br = item.sceneBoundingRect()
                             rect = br if rect is None else rect.united(br)
@@ -461,6 +461,62 @@ class MainWindow(QMainWindow):
         # Save / Load graph actions
         save_action = tb.addAction('Save Graph')
         load_action = tb.addAction('Load Graph')
+        # Run / Fetch controls
+        run_action = tb.addAction('Run')
+        fetch_action = tb.addAction('Fetch')
+
+        def _run_graph():
+            try:
+                self.graph.fetch_only = False
+            except Exception:
+                pass
+            try:
+                from .nodes import ViewerNode
+                for n in self.graph.nodes:
+                    try:
+                        if isinstance(n, ViewerNode):
+                            inp = n.inputs.get('image')
+                            if inp is None:
+                                continue
+                            try:
+                                _ = inp.get()
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        def _fetch_graph():
+            try:
+                self.graph.fetch_only = True
+            except Exception:
+                pass
+            try:
+                from .nodes import ViewerNode
+                for n in self.graph.nodes:
+                    try:
+                        if isinstance(n, ViewerNode):
+                            inp = n.inputs.get('image')
+                            if inp is None:
+                                continue
+                            try:
+                                _ = inp.get()
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        run_action.triggered.connect(_run_graph)
+        fetch_action.triggered.connect(_fetch_graph)
+        # expose methods on the window so NodeItem instances can call them
+        try:
+            self.run_graph = _run_graph
+            self.fetch_graph = _fetch_graph
+        except Exception:
+            pass
 
         def _save_graph():
             try:

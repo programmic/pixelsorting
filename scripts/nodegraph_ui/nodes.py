@@ -8,43 +8,81 @@ import os
 from .. import passes
 
 class SourceImageNode(Node):
+    """A simple source node that loads images from `assets/images`.
+
+    This implementation keeps a list of loaded PIL images (`_images`) and
+    a parallel list of shortened display names (`_image_files`) used by the UI
+    combo box. The full file paths are stored in `_image_paths` for debugging
+    or future use.
+    """
     def __init__(self):
         super().__init__()
         self.display_name = "Source Image"
         self.category = "Base Nodes"
         self.description = "Provides a source image from the assets/images directory."
         self.tooltips_in = {}
-        self.tooltips_out = {
-            "image": "Output image from the source node."
-        }
+        self.tooltips_out = {"image": "Output image from the source node."}
 
         self.index = 0
 
-        self.inputs = {} # source node has no inputs
-        self.outputs["image"] = OutputSocket(
-            self, "image", SocketType.PIL_IMG
-        )
+        # no inputs for a source node
+        self.inputs = {}
+        self.outputs["image"] = OutputSocket(self, "image", SocketType.PIL_IMG)
 
-        self._images: list[Image.Image] = []
-        self._image_files: list[str] = []
+        # Internal lists: full paths, loaded PIL images, and shortened display names
+        self._image_paths = []
+        self._images = []
+        self._image_files = []
+
         self._load_images()
-    
+
+    def _short_name(self, name: str, maxlen: int = 14) -> str:
+        if not name:
+            return ""
+        if len(name) <= maxlen:
+            return name
+        # keep start and end with ellipsis in the middle
+        part = max(4, (maxlen - 1) // 2)
+        return f"{name[:part]}…{name[-part:]}"
+
     def _load_images(self):
+        self._image_paths.clear()
         self._images.clear()
         self._image_files.clear()
-        for file in sorted(os.listdir("assets/images")):
-            if file.lower().endswith((".png", ".jpg", ".jpeg", ".bmp", ".gif")):
-                img = Image.open(os.path.join("assets/images", file)).convert("RGB")
+        try:
+            image_dir = os.path.join(os.getcwd(), "assets", "images")
+            if not os.path.isdir(image_dir):
+                return
+            for fname in sorted(os.listdir(image_dir)):
+                if not fname.lower().endswith((".png", ".jpg", ".jpeg", ".bmp", ".gif")):
+                    continue
+                full = os.path.join(image_dir, fname)
+                try:
+                    img = Image.open(full).convert("RGB")
+                except Exception:
+                    continue
+                self._image_paths.append(full)
                 self._images.append(img)
-                self._image_files.append(file)
-    
+                # display name: file name without extension, shortened to fit
+                try:
+                    base = os.path.splitext(fname)[0]
+                except Exception:
+                    base = fname
+                self._image_files.append(self._short_name(base, maxlen=14))
+        except Exception:
+            # be resilient on load errors
+            pass
+
     def compute(self):
         if not self._images:
             self.outputs["image"]._cache = None
             return
-        
-        idx = max(0, min(self.index, len(self._images) - 1))
-        self.outputs["image"]._cache = self._images[idx]
+        idx = int(getattr(self, "index", 0) or 0)
+        idx = max(0, min(idx, len(self._images) - 1))
+        try:
+            self.outputs["image"]._cache = self._images[idx]
+        except Exception:
+            self.outputs["image"]._cache = None
 
 class BlurNode(Node):
     def __init__(self):
@@ -496,6 +534,7 @@ class DitherNode(Node):
             traceback.print_exc()
             dithered = img
 
+        print(f"DitherNode: dithered image size={getattr(dithered, 'size', None)}")
         self.outputs["image"]._cache = dithered
 
 class ValueIntNode(Node):

@@ -21,8 +21,16 @@ class InputSocket:
         self.socket_type: SocketType = socket_type
         self.connection: Connection | None = None
         self.is_optional = is_optional
+        # UI may place an override value here when the input is editable
+        self._override = None
     
     def get(self):
+        # If an override has been set via the UI, prefer it when there's no connection
+        try:
+            if self._override is not None and self.connection is None:
+                return self._override
+        except Exception:
+            pass
         return self.connection.output_socket.get() if self.connection else None
 
 
