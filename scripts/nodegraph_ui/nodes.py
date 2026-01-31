@@ -1,13 +1,13 @@
 # scripts/nodegraph_ui/nodes.py
 
-from .classes import Node, SocketType, InputSocket, OutputSocket
+from .classes import InputNode, ProcessorNode, OutputNode, SocketType, InputSocket, OutputSocket
 from PIL import Image
 import time
 import os
 
 from .. import passes
 
-class SourceImageNode(Node):
+class SourceImageNode(InputNode):
     def __init__(self):
         super().__init__()
         self.display_name = "Source Image"
@@ -46,7 +46,7 @@ class SourceImageNode(Node):
         idx = max(0, min(self.index, len(self._images) - 1))
         self.outputs["image"]._cache = self._images[idx]
 
-class BlurNode(Node):
+class BlurNode(ProcessorNode):
     def __init__(self):
         super().__init__()
         self.display_name = "Blur Image"
@@ -138,7 +138,7 @@ class BlurNode(Node):
 #       progress: Optional[callable] = None
 #       ) -> Image.Image:
 
-class KuwaharaNode(Node):
+class KuwaharaNode(ProcessorNode):
     def __init__(self):
         super().__init__()
         self.display_name = "Kuwahara Filter"
@@ -206,7 +206,7 @@ class KuwaharaNode(Node):
 
         self.outputs["image"]._cache = filtered
 
-class InvertNode(Node):
+class InvertNode(ProcessorNode):
     def __init__(self):
         super().__init__()
         self.display_name = "Invert Colors"
@@ -281,7 +281,7 @@ class InvertNode(Node):
 
         self.outputs["image"]._cache = inverted
 
-class RescaleNode(Node):
+class RescaleNode(ProcessorNode):
     def __init__(self):
         super().__init__()
         self.display_name = "Rescale Image"
@@ -336,7 +336,7 @@ class RescaleNode(Node):
 
         self.outputs["image"]._cache = reduced
 
-class ContrastMaskNode(Node):
+class ContrastMaskNode(ProcessorNode):
     # args: (img: Image.Image, limMin: int, limMax: int)
     def __init__(self):
         super().__init__()
@@ -387,7 +387,7 @@ class ContrastMaskNode(Node):
 
         self.outputs["mask"]._cache = mask
 
-class DifferenceNode(Node):
+class DifferenceNode(ProcessorNode):
     def __init__(self):
         super().__init__()
         self.display_name = "Difference"
@@ -431,7 +431,7 @@ class DifferenceNode(Node):
 
         self.outputs["image"]._cache = diff
 
-class DitherNode(Node):
+class DitherNode(ProcessorNode):
     def __init__(self):
         super().__init__()
         self.display_name = "Dither Image"
@@ -498,7 +498,7 @@ class DitherNode(Node):
 
         self.outputs["image"]._cache = dithered
 
-class ValueIntNode(Node):
+class ValueIntNode(InputNode):
     def __init__(self):
         super().__init__()
         self.category = "Input Nodes"
@@ -512,7 +512,7 @@ class ValueIntNode(Node):
     def compute(self):
         self.outputs["value"]._cache = self.value
 
-class ValueFloatNode(Node):
+class ValueFloatNode(InputNode):
     def __init__(self):
         super().__init__()
         self.category = "Input Nodes"
@@ -525,7 +525,7 @@ class ValueFloatNode(Node):
     def compute(self):
         self.outputs["value"]._cache = self.value
 
-class ValueStringNode(Node):
+class ValueStringNode(InputNode):
     def __init__(self):
         super().__init__()
         self.category = "Input Nodes"
@@ -545,7 +545,7 @@ class ValueStringNode(Node):
         self.outputs["value"]._cache = self.value
     
 
-class ValueBoolNode(Node):
+class ValueBoolNode(InputNode):
     def __init__(self):
         super().__init__()
         self.category = "Input Nodes"
@@ -558,7 +558,7 @@ class ValueBoolNode(Node):
     def compute(self):
         self.outputs["value"]._cache = self.value
 
-class ValueColorNode(Node):
+class ValueColorNode(InputNode):
     def __init__(self):
         super().__init__()
         self.category = "Input Nodes"
@@ -572,7 +572,7 @@ class ValueColorNode(Node):
         self.outputs["value"]._cache = self.value
 
 
-class ViewerNode(Node):
+class ViewerNode(OutputNode):
     def __init__(self):
         super().__init__()
         self.category = "Base Nodes"
@@ -588,7 +588,7 @@ class ViewerNode(Node):
         # store into a cache attribute for potential UI use
         self._last_image = img
 
-class RenderToFileNode(Node):
+class RenderToFileNode(OutputNode):
     def __init__(self):
         super().__init__()
         self.category = "Base Nodes"

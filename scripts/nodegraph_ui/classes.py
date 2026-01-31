@@ -76,6 +76,16 @@ class Node:
         self.tooltips_in: dict[str, str] = {}
         self.tooltips_out: dict[str, str] = {}
 
+    @property
+    def node_type(self):
+        if isinstance(self, InputNode):
+            return "input"
+        elif isinstance(self, OutputNode):
+            return "output"
+        elif isinstance(self, ProcessorNode):
+            return "processor"
+        return "unknown"
+
     
     def mark_dirty(self):
         for out in self.outputs.values():
@@ -94,6 +104,17 @@ class Node:
     def compute(self):
         raise NotImplementedError("Compute method must be implemented by subclasses")
 
+class InputNode(Node):
+    """Input nodes have no input sockets, but can easily be extended to have garphical input controls like text input, sliders, toggles, dropdowns, etc."""
+    
+
+class ProcessorNode(Node):
+    """Processor nodes have both input and output sockets."""
+    pass
+
+class OutputNode(Node):
+    """Output nodes have no output sockets, but can easily be extended to have graphical output controls like image viewers, toFile renderers, etc."""
+    pass
 
 class Graph:
     def __init__(self):

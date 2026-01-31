@@ -124,7 +124,18 @@ class NodeItem(QGraphicsRectItem):
 
         # Node background (draggable) - use self as the rect item
         super().__init__(0, 0, self.WIDTH, self.HEIGHT, parent=None)
-        self.setBrush(QBrush(QColor(50, 50, 50)))
+
+        # Set background color based on node type
+        node_type = getattr(self.node, 'node_type', 'unknown')
+        if node_type == "input":
+            bg_color = QColor(60, 90, 160)  # blue-ish
+        elif node_type == "output":
+            bg_color = QColor(90, 60, 60)   # red-ish
+        elif node_type == "processor":
+            bg_color = QColor(50, 50, 50)   # default dark
+        else:
+            bg_color = QColor(80, 80, 80)
+        self.setBrush(QBrush(bg_color))
         self.setZValue(-1)  # keep background behind embedded widgets (they use higher z)
         # Enable selection so nodes can be clicked/selected
         self.setFlag(QGraphicsItem.ItemIsSelectable, True)
@@ -134,7 +145,6 @@ class NodeItem(QGraphicsRectItem):
         # Notify on position changes
         self.setFlag(QGraphicsItem.ItemSendsScenePositionChanges, True)
         # Let the parent NodeItem receive mouse events rather than the bg child
-        self.setAcceptedMouseButtons(Qt.NoButton)
         self.setAcceptHoverEvents(False)
 
         # Title
@@ -150,7 +160,6 @@ class NodeItem(QGraphicsRectItem):
         # Remove border so no outline is visible
         self.setPen(QPen(Qt.NoPen))
 
-
         self.input_items = {}
         self.output_items = {}
 
@@ -163,6 +172,8 @@ class NodeItem(QGraphicsRectItem):
         computed_height = self.MARGIN_TOP + max_sockets * self.SOCKET_SPACING + self.MARGIN_BOTTOM
         # reserve extra space for viewer preview if needed
         try:
+            if hasattr(self.node, 'node_type') and self.node.node_type == "output":
+                computed_height += 40
             if isinstance(self.node, ViewerNode):
                 computed_height += 120
         except Exception:
@@ -177,6 +188,13 @@ class NodeItem(QGraphicsRectItem):
             super().__init__(parent)
             self._w = width
             self._h = height
+            # Make the widget background transparent so only the custom painting is visible
+            try:
+                self.setAttribute(Qt.WA_TranslucentBackground, True)
+                self.setAutoFillBackground(False)
+                self.setStyleSheet("background: transparent; border: 0px;")
+            except Exception:
+                pass
             self.setFixedSize(QSize(self._w, self._h))
             self.setCursor(Qt.PointingHandCursor)
 
@@ -185,6 +203,7 @@ class NodeItem(QGraphicsRectItem):
 
         def paintEvent(self, event):
             p = QPainter(self)
+            p.save()
             p.setRenderHint(QPainter.Antialiasing)
             checked = self.isChecked()
             # colors
@@ -195,22 +214,25 @@ class NodeItem(QGraphicsRectItem):
             # draw track
             radius = self._h / 2
             rect = self.rect()
-            track_rect = rect.adjusted(0, 0, 0, 0)
-            p.setPen(Qt.NoPen)
+            track_rect = rect.adjusted(0, 0, -1, -1)
+            p.setPen(QPen(Qt.NoPen))
             p.setBrush(QBrush(track_on if checked else track_off))
             p.drawRoundedRect(track_rect, radius, radius)
 
             # draw knob
             knob_d = self._h - 4
             knob_y = 2
-            if checked:
-                knob_x = self._w - knob_d - 2
-            else:
-                knob_x = 2
+            knob_x = self._w - knob_d - 2 if checked else 2
             p.setBrush(QBrush(knob_color))
             p.setPen(QPen(QColor(200, 200, 200)))
             p.drawEllipse(knob_x, knob_y, knob_d, knob_d)
-            p.end()
+            p.restore()
+            try:
+                # lightweight debug hint when running in dev
+                if getattr(self, '_debug_print', False):
+                    print(f"[ui_node_item] ToggleSwitch.paintEvent checked={checked} pos={self.pos()} size=({self._w},{self._h})")
+            except Exception:
+                pass
 
     # Lightweight graphics-only toggle implemented as a QGraphicsObject to
     # avoid the overhead of embedding QWidget proxies in the scene.
@@ -221,11 +243,21 @@ class NodeItem(QGraphicsRectItem):
             self._h = height
             self._checked = False
             self.setAcceptHoverEvents(True)
+            # accept mouse presses so the toggle can be interacted with directly
+            try:
+                self.setAcceptedMouseButtons(Qt.LeftButton)
+            except Exception:
+                pass
+            try:
+                self.setFlag(QGraphicsItem.ItemIsSelectable, False)
+            except Exception:
+                pass
 
         def boundingRect(self):
             return QRectF(0, 0, self._w, self._h)
 
         def paint(self, painter, option, widget=None):
+            painter.save()
             painter.setRenderHint(QPainter.Antialiasing)
             checked = self._checked
             track_on = QColor(1, 166, 150)
@@ -233,8 +265,9 @@ class NodeItem(QGraphicsRectItem):
             knob_color = QColor(255, 255, 255)
 
             radius = self._h / 2
-            rect = self.boundingRect()
-            painter.setPen(Qt.NoPen)
+            rect = self.boundingRect().adjusted(0, 0, -1, -1)
+            # ensure no pen (outline) when drawing the track
+            painter.setPen(QPen(Qt.NoPen))
             painter.setBrush(QBrush(track_on if checked else track_off))
             painter.drawRoundedRect(rect, radius, radius)
 
@@ -244,6 +277,26 @@ class NodeItem(QGraphicsRectItem):
             painter.setBrush(QBrush(knob_color))
             painter.setPen(QPen(QColor(200, 200, 200)))
             painter.drawEllipse(knob_x, knob_y, knob_d, knob_d)
+            painter.restore()
+            # debug outline to visualize the ToggleSwitchItem bounds
+            try:
+                if getattr(self, '_debug_print', False):
+                    try:
+                        opt_pen = QPen(QColor(255, 0, 255, 200))
+                        opt_pen.setStyle(Qt.DashLine)
+                        saved = painter.save()
+                        # draw overlay at higher z by creating a temporary QPainter on scene?
+                        # fallback: emit print so logs show rect.
+                        print(f"[ui_node_item] ToggleSwitchItem bounds={self.boundingRect()} checked={checked} parent={type(self.parentItem()).__name__ if self.parentItem() is not None else None}")
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            try:
+                if getattr(self, '_debug_print', False):
+                    print(f"[ui_node_item] ToggleSwitchItem.paint checked={checked} rect={rect} parent={type(self.parentItem()).__name__ if self.parentItem() is not None else None}")
+            except Exception:
+                pass
 
         def mousePressEvent(self, event):
             try:
@@ -256,6 +309,11 @@ class NodeItem(QGraphicsRectItem):
                         cb(self._checked)
                     except Exception:
                         pass
+                try:
+                    if getattr(self, '_debug_print', False):
+                        print(f"[ui_node_item] ToggleSwitch.mousePressEvent checked={self._checked} pos={self.pos()}")
+                except Exception:
+                    pass
             except Exception:
                 pass
 
@@ -1061,57 +1119,172 @@ class NodeItem(QGraphicsRectItem):
                                 pass
                         widget.textChanged.connect(_on_str)
                     elif sock.socket_type == SocketType.BOOLEAN:
-                        # Use a lightweight QGraphicsObject-based toggle (no QWidget proxy)
-                        default_w = 48
-                        default_h = 24
+                        # Add a modern toggle switch for boolean sockets.
                         try:
-                            val = getattr(self.node, name)
+                            ToggleItemCls = getattr(type(self), 'ToggleSwitchItem', None)
+                            # Prefer the QWidget-based ToggleSwitch (embedded via
+                            # QGraphicsProxyWidget) which paints reliably. If not
+                            # available, fall back to the lightweight
+                            # ToggleSwitchItem graphics object.
+                            ToggleWidgetCls = getattr(type(self), 'ToggleSwitch', None)
+                            ToggleItemCls = getattr(type(self), 'ToggleSwitchItem', None)
+                            widget = None
+                            def _on_bool(v, s=sock, n=name):
+                                try:
+                                    setattr(self.node, n, bool(v))
+                                except Exception:
+                                    pass
+                                try:
+                                    s._cache = bool(v)
+                                    s._dirty = False
+                                except Exception:
+                                    pass
+                                try:
+                                    for dep in self.node.dependents:
+                                        dep.mark_dirty()
+                                except Exception:
+                                    pass
+                            try:
+                                # Try QWidget toggle first
+                                if ToggleWidgetCls is not None:
+                                    wdg = ToggleWidgetCls()
+                                    try:
+                                        wdg.setFixedSize(QSize(48, 24))
+                                        wdg._w = 48
+                                        wdg._h = 24
+                                    except Exception:
+                                        pass
+                                    widget = wdg
+                                    # init state
+                                    try:
+                                        val = getattr(self.node, name)
+                                    except Exception:
+                                        val = getattr(sock, '_cache', None)
+                                    try:
+                                        widget.setChecked(bool(val))
+                                    except Exception:
+                                        pass
+
+                                    # connect signal
+                                    try:
+                                        widget.toggled.connect(_on_bool)
+                                    except Exception:
+                                        pass
+                                elif ToggleItemCls is not None:
+                                    # Graphics-item fallback
+                                    widget = ToggleItemCls(parent=self)
+                                    try:
+                                        val = getattr(self.node, name)
+                                    except Exception:
+                                        val = getattr(sock, '_cache', None)
+                                    try:
+                                        widget.setChecked(bool(val))
+                                    except Exception:
+                                        pass
+                                    try:
+                                        widget.setCallback(_on_bool)
+                                    except Exception:
+                                        try:
+                                            widget._callback = _on_bool
+                                        except Exception:
+                                            pass
+                                    try:
+                                        widget.node = self.node
+                                    except Exception:
+                                        pass
+                            except Exception:
+                                widget = None
                         except Exception:
-                            val = False
-                        widget = self.ToggleSwitchItem(width=default_w, height=default_h, parent=self)
-                        widget.setChecked(bool(val))
-                        def _on_bool(state, s=sock, n=name):
-                            try:
-                                b = bool(state)
-                            except Exception:
-                                b = False
-                            try:
-                                setattr(self.node, n, b)
-                            except Exception:
-                                pass
-                            try:
-                                s._cache = b
-                                s._dirty = False
-                            except Exception:
-                                pass
-                            try:
-                                for dep in self.node.dependents:
-                                    dep.mark_dirty()
-                            except Exception:
-                                pass
-                        widget.setCallback(_on_bool)
+                            widget = None
 
                     if widget is not None:
                         # cap widths to avoid overflowing the node box
                         max_w = int(self.WIDTH * 0.45)
                         w = min(w, max_w)
+                        # for ToggleSwitch widget keep its own fixed size; otherwise set width
+                        try:
+                            ToggleCls = getattr(type(self), 'ToggleSwitch', None)
+                            if ToggleCls is not None and isinstance(widget, ToggleCls):
+                                # ensure toggle keeps its intended size
+                                try:
+                                    widget.setFixedSize(QSize(getattr(widget, '_w', w), getattr(widget, '_h', 24)))
+                                except Exception:
+                                    pass
+                            else:
+                                widget.setFixedWidth(w)
+                        except Exception:
+                            pass
+                        # store a pseudo-width used for layout calculations for non-toggle widgets
+                        try:
+                            ToggleCls = getattr(type(self), 'ToggleSwitch', None)
+                            if not (ToggleCls is not None and isinstance(widget, ToggleCls)):
+                                widget._w = w
+                        except Exception:
+                            pass
+
                         # Position widget: center horizontally on the node for booleans,
                         # otherwise align left of the label.
                         if sock.socket_type == SocketType.BOOLEAN:
-                            x_widget = int((self.WIDTH - widget._w) / 2)
+                            # Position the graphics ToggleSwitchItem directly
+                            try:
+                                if widget is not None and isinstance(widget, self.ToggleSwitchItem):
+                                    ww = getattr(widget, '_w', 48)
+                                    hh = getattr(widget, '_h', 24)
+                                    x_widget = int((self.WIDTH - ww) / 2)
+                                    y_widget = int(y - 10 + 6)
+                                    try:
+                                        widget.setPos(x_widget, y_widget)
+                                        widget.setZValue(2)
+                                        item._modifiable_widget = widget
+                                    except Exception:
+                                        pass
+                                else:
+                                    # fallback: treat as proxyed widget
+                                    try:
+                                        widget.node = self.node
+                                    except Exception:
+                                        pass
+                                    x_widget = int((self.WIDTH - getattr(widget, '_w', w)) / 2)
+                                    y_widget = int(y - 10 + 6)
+                                    try:
+                                        proxy = QGraphicsProxyWidget(self)
+                                        proxy.setWidget(widget)
+                                        proxy.resize(getattr(widget, '_w', w), getattr(widget, '_h', 24))
+                                        proxy.setAcceptedMouseButtons(Qt.LeftButton)
+                                        proxy.setPos(x_widget, y_widget)
+                                        proxy.setZValue(2)
+                                        item._modifiable_widget = proxy
+                                        item._modifiable_widget_widget = widget
+                                    except Exception:
+                                        pass
+                            except Exception:
+                                pass
                         else:
-                            x_widget = int(label.pos().x() - widget._w - 8)
+                            x_widget = int(label.pos().x() - getattr(widget, '_w', w) - 8)
                             if x_widget < 6:
                                 x_widget = 6
-                        # vertically center around socket but nudge down slightly
-                        y_widget = int(y - 10 + 6)
-                        try:
-                            widget.setPos(x_widget, y_widget)
-                            widget.setZValue(2)
-                            # store reference in case needed later
-                            item._modifiable_widget = widget
-                        except Exception:
-                            pass
+                            y_widget = int(y - 10 + 6)
+                            try:
+                                # Embed QWidget editors using a QGraphicsProxyWidget so they render
+                                proxy = QGraphicsProxyWidget(self)
+                                proxy.setWidget(widget)
+                                # Do not let the editor proxy steal mouse presses — allow node dragging
+                                try:
+                                    proxy.setAcceptedMouseButtons(Qt.NoButton)
+                                except Exception:
+                                    pass
+                                proxy.setPos(x_widget, y_widget)
+                                proxy.setZValue(2)
+                                # store reference to proxy (and widget if needed)
+                                item._modifiable_widget = proxy
+                                item._modifiable_widget_widget = widget
+                                # also expose node on the widget for potential callbacks
+                                try:
+                                    widget.node = self.node
+                                except Exception:
+                                    pass
+                            except Exception:
+                                pass
             except Exception:
                 pass
             y += self.SOCKET_SPACING
