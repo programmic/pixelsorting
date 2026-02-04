@@ -7,8 +7,29 @@ import os
 
 from .. import passes
 
+# Math nodes imported to keep nodes.py organized
+from .nodes_math import *
+
 class SourceImageNode(InputNode):
     def __init__(self):
+        """
+        Initialize a "Source Image" node instance.
+        Sets up metadata and I/O for a node that provides a source image from an assets/images
+        directory. Attributes created:
+        - display_name (str): Human-readable name ("Source Image").
+        - category (str): Node category ("Base Nodes").
+        - description (str): Short description of the node's purpose.
+        - tooltips_in (dict): Mapping of input socket names to tooltip strings (empty for this node).
+        - tooltips_out (dict): Mapping of output socket names to tooltip strings (contains "image").
+        - index (int): Numeric index for the node (initialized to 0).
+        - inputs (dict): Input sockets mapping (empty for this source node).
+        - outputs (dict): Output sockets mapping; provides an "image" OutputSocket that emits a PIL image.
+        - _images (list[PIL.Image.Image]): Loaded in-memory images (initially empty).
+        - _image_files (list[str]): File paths for available images (initially empty).
+        Side effects:
+        - Calls self._load_images() to populate _images and _image_files from the assets/images
+            directory. Implementation of _load_images() determines error handling and file I/O behavior.
+        """
         super().__init__()
         self.display_name = "Source Image"
         self.category = "Base Nodes"
@@ -130,13 +151,6 @@ class BlurNode(ProcessorNode):
                 pass
 
         self.outputs["image"]._cache = blurred
-#img: Image.Image,
-#       kernel: int,
-#       regions: int = 8,
-#       isAnisotropic: bool = False,
-#       stylePapari: bool = False,
-#       progress: Optional[callable] = None
-#       ) -> Image.Image:
 
 class KuwaharaNode(ProcessorNode):
     def __init__(self):
@@ -289,7 +303,7 @@ class RescaleNode(ProcessorNode):
         self.description = "Rescales the input image to the specified resolution."
         self.tooltips_in = {
             "image": "Input image to be rescaled.",
-            "resolution": "Target resolution in WIDTHxHEIGHT format (e.g., '800x600')."
+            "resolution": "Target resolution in WIDTHxHEIGHT format (e.g., '800x600'), or target width."
         }
         self.tooltips_out = {
             "image": "Output rescaled image."
@@ -312,6 +326,7 @@ class RescaleNode(ProcessorNode):
         )
     
     def compute(self):
+        print(f"RescaleNode: starting compute with args: image={self.inputs['image'].get()}, resolution={self.inputs['resolution'].get()}, allow_upscale={self.inputs['allow_upscale'].get()}‼")
         img = self.inputs["image"].get()
         resolution = self.inputs["resolution"].get()
         if img is None:
@@ -335,6 +350,9 @@ class RescaleNode(ProcessorNode):
             reduced = img
 
         self.outputs["image"]._cache = reduced
+        # mark downstream nodes as dirty
+        for dep in self.dependents:
+            dep.mark_dirty()
 
 class ContrastMaskNode(ProcessorNode):
     # args: (img: Image.Image, limMin: int, limMax: int)
@@ -498,6 +516,7 @@ class DitherNode(ProcessorNode):
 
         self.outputs["image"]._cache = dithered
 
+
 class ValueIntNode(InputNode):
     def __init__(self):
         super().__init__()
@@ -544,7 +563,6 @@ class ValueStringNode(InputNode):
     def compute(self):
         self.outputs["value"]._cache = self.value
     
-
 class ValueBoolNode(InputNode):
     def __init__(self):
         super().__init__()
@@ -571,7 +589,89 @@ class ValueColorNode(InputNode):
     def compute(self):
         self.outputs["value"]._cache = self.value
 
+class GetImageDataNode(ProcessorNode):
+    @property
+    def is_soft_computation(self):
+        return True
+    def __init__(self):
+        super().__init__()
+        self.display_name = "Get Image Data"
+        self.category = "Miscellaneous Nodes"
+        self.description = "Retrieves the width and height, mode info and format of the input image."
+        self.tooltips_in = {
+            "image": "Input image to get data from."
+        }
+        self.tooltips_out = {
+            "width": "Width of the input image in pixels.",
+            "height": "Height of the input image in pixels.",
+            "mode": "Color mode of the input image (e.g., RGB, CMYK).",
+            "format": "File format of the input image (e.g., PNG, JPEG).",
+            "info": "Additional info dictionary of the input image."
+        }
 
+        try:
+            self.inputs = {}
+            self.outputs = {}
+
+            self.inputs["image"] = InputSocket(
+                self,
+                "image", SocketType.PIL_IMG
+            )
+
+            self.outputs["width"] = OutputSocket(
+                self,
+                "width", SocketType.INT
+            )
+
+            self.outputs["height"] = OutputSocket(
+                self,
+                "height", SocketType.INT
+            )
+
+            self.outputs["mode"] = OutputSocket(
+                self,
+                "mode", SocketType.STRING
+            )
+
+            self.outputs["format"] = OutputSocket(
+                self,
+                "format", SocketType.STRING
+            )
+
+            self.outputs["info"] = OutputSocket(
+                self,
+                "info", SocketType.STRING
+            )
+        except Exception as e:
+            print(f"GetImageDataNode: Initialization failed ({e}).")
+
+    # Use default mark_dirty from ProcessorNode/Node to avoid recompute oscillation
+
+    def compute(self):
+        img = self.inputs["image"].get(allow_hard=False)
+        if img is None:
+            self.outputs["width"]._cache = None
+            self.outputs["height"]._cache = None
+            self.outputs["mode"]._cache = None
+            self.outputs["format"]._cache = None
+            self.outputs["info"]._cache = None
+            print("GetImageDataNode: No input image.")
+            return
+        try:
+            data = passes.getImageData(img)
+            self.outputs["width"]._cache = data["width"]
+            self.outputs["height"]._cache = data["height"]
+            self.outputs["mode"]._cache = data["mode"]
+            self.outputs["format"]._cache = data["format"]
+            self.outputs["info"]._cache = data["info"]
+        except Exception as e:
+            print(f"GetImageDataNode: Failed to get image data ({e}).")
+            self.outputs["width"]._cache = None
+            self.outputs["height"]._cache = None
+            self.outputs["mode"]._cache = None
+            self.outputs["format"]._cache = None
+            self.outputs["info"]._cache = None
+    
 class ViewerNode(OutputNode):
     def __init__(self):
         super().__init__()
@@ -629,3 +729,64 @@ class RenderToFileNode(OutputNode):
             import traceback
             print(f"RenderToFileNode: Saving image failed ({e}).")
             traceback.print_exc()
+
+class DisplayDataNode(OutputNode):
+    def __init__(self):
+        super().__init__()
+        self.display_name = "Display Data"
+        self.category = "Miscellaneous Nodes"
+        self.description = "Displays input data"
+        self.tooltips_in = {
+            "data": "Input data to display."
+        }
+        try:
+            self.inputs = {}
+            self.inputs["data"] = InputSocket(
+                self, "data", SocketType.UNDEFINED
+            )
+        except Exception as e:
+            print(f"DisplayDataNode: Initialization failed ({e}).")
+    def compute(self):
+        try:
+            data = self.inputs["data"].get()
+            print(f"DisplayDataNode: Input data = {data}")
+        except Exception as e:
+            print(f"DisplayDataNode: Failed to get input data ({e}).")
+        pass
+
+class ToStringNode(ProcessorNode):
+    def __init__(self):
+        super().__init__()
+        self.display_name = "To String"
+        self.category = "Miscellaneous Nodes"
+        self.description = "Converts the input data to a string representation."
+        self.tooltips_in = {
+            "data": "Input data to convert to string."
+        }
+        self.tooltips_out = {
+            "string": "String representation of the input data."
+        }
+        try:
+            self.inputs = {}
+            self.outputs = {}
+
+            self.inputs["data"] = InputSocket(
+                self,
+                "data", SocketType.UNDEFINED
+            )
+
+            self.outputs["string"] = OutputSocket(
+                self,
+                "string", SocketType.STRING
+            )
+        except Exception as e:
+            print(f"ToStringNode: Initialization failed ({e}).")
+
+    def compute(self):
+        data = self.inputs["data"].get()
+        try:
+            string_repr = str(data)
+        except Exception as e:
+            print(f"ToStringNode: Conversion to string failed ({e}).")
+            string_repr = ""
+        self.outputs["string"]._cache = string_repr

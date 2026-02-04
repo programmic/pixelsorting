@@ -23,6 +23,20 @@ from enum import Enum
 from . import converters
 from .timing import timing
 
+def getImageData(img: Image.Image) -> dict:
+    """Returns dictionary with image metadata.\nDictionary: width, height, mode, info, format"""
+    width, height = img.size
+    mode = img.mode
+    info = img.info
+    format = img.format
+    return {
+        "width": width,
+        "height": height,
+        "mode": mode,
+        "info": info,
+        "format": format
+    }
+
 def _ensure_rgba(img: Image.Image) -> Image.Image: #globalignore
     """Ensure image is in RGBA mode, preserving alpha if present."""
     if img.mode == 'RGBA':
@@ -1523,6 +1537,7 @@ def meanShiftCluster(
         for x in range(width):
             lbl = labels[y, x]
             if lbl >= 0:
+
                 avg_colors[lbl] += img_np[y, x]
                 counts[lbl] += 1
 
@@ -1974,7 +1989,7 @@ def quantize(
 
 def reduce_size(
     img: Image.Image,
-    resolution: str | tuple[str, str] = "1080x1920",
+    resolution: str | tuple[str, str] | int = "1080x1920",
     fit_mode: str = "fit",
     upscale: bool = False
 ) -> Image.Image:
@@ -1983,44 +1998,74 @@ def reduce_size(
 
     Parameters:
     - img: PIL.Image
-    - resolution: "WIDTHxHEIGHT" string or (width, height) tuple
+    - resolution: "WIDTHxHEIGHT" string or (width, height) tuple or width (height will be calculated to preserve aspect ratio)
     - fit_mode: "fit" (preserve aspect, fit inside), "crop" (fill and center-crop), or "stretch"
     - upscale: if False, do not enlarge images beyond their original size
 
     Returns:
     - resized PIL.Image
     """
-    # Parse resolution
+    target_w = None
+    target_h = None
+
     if isinstance(resolution, str):
-        try:
-            res_l = resolution.lower()
-            if res_l.isdigit():
-                target_w = target_h = int(res_l)
-            else:
+        res_l = resolution.lower()
+        if res_l.isdigit(): # single number: width, preserve aspect ratio
+            print("Single number resolution provided, preserving aspect ratio.")
+            target_w = int(res_l)
+        else: # parse width x height
+            try:
+                # Try common delimiters
                 if "x" in res_l:
                     parts = res_l.split("x")
                 elif "," in res_l:
                     parts = res_l.split(",")
                 elif " " in res_l:
                     parts = res_l.split(" ")
-                elif "(" in res_l and ")" in res_l:
-                    res_l = res_l.replace("(", "").replace(")", "")
-                    parts = res_l.split(",")
                 elif "*" in res_l:
                     parts = res_l.split("*")
                 elif "-" in res_l:
                     parts = res_l.split("-")
+                elif "(" in res_l and ")" in res_l:
+                    res_l = res_l.replace("(", "").replace(")", "")
+                    parts = res_l.split(",")
                 else:
-                    raise ValueError("resolution must be like '1080x1920' or (w,h)")
+                    raise ValueError("Delimiter not found in resolution string.")
+
                 if len(parts) != 2:
-                    raise ValueError("resolution must be like '1080x1920' or (w,h)")
+                    raise ValueError("Resolution string must contain exactly one width and one height.")
+                
                 target_w, target_h = map(int, parts)
-        except Exception as e:
-            raise ValueError("resolution must be like '1080x1920' or (w,h)") from e
+            except Exception as e:
+                raise ValueError(f"Failed to parse resolution string '{resolution}'. Expected format 'WxH' or similar.") from e
+
     elif isinstance(resolution, tuple) and len(resolution) == 2:
         target_w, target_h = map(int, resolution)
+        
+    elif isinstance(resolution, int):
+        target_w = resolution
+
     else:
-        raise ValueError("resolution must be a 'WIDTHxHEIGHT' string or a (width, height) tuple")
+        raise ValueError("resolution must be a 'WIDTHxHEIGHT' string, a (width, height) tuple, or an integer width.")
+    
+    # 2. Calculate missing dimension if aspect ratio must be preserved (only W provided)
+    if target_w is not None and target_h is None:
+        # This covers:
+        # a) Input was an integer (handled in elif resolution is int)
+        # b) Input was a digit string (handled in if res_l.isdigit())
+        
+        # Ensure we don't divide by zero if image width is zero (shouldn't happen but good practice)
+        if img.width == 0:
+            raise ValueError("Image width is zero, cannot calculate aspect ratio.")
+            
+        # Calculate height based on original aspect ratio
+        calculated_h = int(target_w * img.height / img.width)
+        target_h = calculated_h
+        
+    # Final check to ensure dimensions were determined
+    if target_w is None or target_h is None:
+        # This should only happen if the initial parsing failed catastrophically
+        raise RuntimeError("Target resolution dimensions could not be determined.")
 
     if target_w <= 0 or target_h <= 0:
         raise ValueError("Target width and height must be positive integers")
@@ -2308,6 +2353,7 @@ def find_edges(
             try:
                 progress({'percent': 100, 'message': 'Canny edge detection complete'})
             except Exception:
+
                 pass
 
         return Image.fromarray(edges_uint8, mode='L')

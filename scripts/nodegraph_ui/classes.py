@@ -13,6 +13,7 @@ class SocketType(Enum):
     ENUM = 7
     COLOR = 8
     LIST_COLORS = 9
+    DICT = 10
 
 class InputSocket:
     def __init__(self, node, tag: str, socket_type: SocketType, is_optional: bool = False):
@@ -22,8 +23,8 @@ class InputSocket:
         self.connection: Connection | None = None
         self.is_optional = is_optional
     
-    def get(self):
-        return self.connection.output_socket.get() if self.connection else None
+    def get(self, allow_hard=True):
+        return self.connection.output_socket.get(allow_hard=allow_hard) if self.connection else None
 
 
 class OutputSocket:
@@ -36,10 +37,11 @@ class OutputSocket:
         self._cache = None
         self._dirty = True
     
-    def get(self):
+    def get(self, allow_hard=True):
         if self._dirty:
-            self.node.compute()
-            self._dirty = False
+            if getattr(self.node, 'is_soft_computation', False) or allow_hard:
+                self.node.compute()
+                self._dirty = False
         return self._cache
     
     def set(self, value):
@@ -50,7 +52,9 @@ class OutputSocket:
             raise ValueError("Attempted to set value of non-modifiable output socket")
     
     def invalidate(self):
-        self._dirty = True
+        if not self._dirty:
+            self._dirty = True
+            # Optionally: notify dependents if needed
 
 
 class Connection:
@@ -66,6 +70,10 @@ class Connection:
         self.output_socket = output_socket
     
 class Node:
+    @property
+    def is_soft_computation(self):
+        """Override in subclasses: True for math/get-data nodes, False for image effects, rescaling, etc."""
+        return False
     def __init__(self):
         self.inputs: dict[str, InputSocket] = {}
         self.outputs: dict[str, OutputSocket] = {}
@@ -88,11 +96,22 @@ class Node:
 
     
     def mark_dirty(self):
+        # Only propagate if at least one output was not already dirty
+        any_newly_dirty = False
+        for out in self.outputs.values():
+            if not out._dirty:
+                out.invalidate()
+                any_newly_dirty = True
+        if any_newly_dirty:
+            for dep in self.dependents:
+                if dep is not self:
+                    dep._mark_dirty_from_upstream()
+
+    def _mark_dirty_from_upstream(self):
+        # Internal: called by upstream node's mark_dirty
         for out in self.outputs.values():
             out.invalidate()
-
-        for dep in self.dependents:
-            dep.mark_dirty()
+        # Do not propagate further to avoid infinite loops
 
     
     def misses_required_inputs(self) -> bool:
@@ -105,7 +124,14 @@ class Node:
         raise NotImplementedError("Compute method must be implemented by subclasses")
 
 class InputNode(Node):
-    """Input nodes have no input sockets, but can easily be extended to have garphical input controls like text input, sliders, toggles, dropdowns, etc."""
+    """Input nodes have no input sockets, but can easily be extended to have graphical input controls like text input, sliders, toggles, dropdowns, etc."""
+
+    def user_modified(self):
+        """
+        Call this method whenever the user changes the value of an input node (e.g., via UI).
+        It will mark all direct dependents as dirty, forcing them to recompute when needed.
+        """
+        self.mark_dirty()
     
 
 class ProcessorNode(Node):
