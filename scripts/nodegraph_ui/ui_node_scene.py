@@ -94,8 +94,16 @@ class NodeScene(QGraphicsScene):
             node = cls()
             self.graph.add_node(node)
             try:
-                from .ui_node_item import NodeItem
-                item = NodeItem(node)
+                from .ui_node_item import NodeItemInput, NodeItemProcessor, NodeItemOutput
+                from .classes import InputNode, ProcessorNode, OutputNode
+                if isinstance(node, InputNode):
+                    item = NodeItemInput(node)
+                elif isinstance(node, ProcessorNode):
+                    item = NodeItemProcessor(node)
+                elif isinstance(node, OutputNode):
+                    item = NodeItemOutput(node)
+                else:
+                    raise TypeError(f"Unknown node type: {type(node)}")
                 item.setPos(scene_pos)
                 self.addItem(item)
                 return item

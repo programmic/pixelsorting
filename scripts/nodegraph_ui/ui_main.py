@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import QWidget, QHBoxLayout, QListWidget, QListWidgetItem, 
 from PyQt5.QtCore import Qt, QEvent
 
 from .ui_node_scene import NodeScene
-from .ui_node_item import NodeItem
+from .ui_node_item import NodeItemInput, NodeItemProcessor, NodeItemOutput
 
 from .classes import Graph, SocketType, Node, InputSocket, OutputSocket
 from .nodes import SourceImageNode
@@ -100,7 +100,7 @@ class MainWindow(QMainWindow):
                     pass
 
             def keyPressEvent(self, event):
-                # Home: center/fit view to all NodeItem bounding boxes
+                # Home: center/fit view to all node item bounding boxes
                 try:
                     if event.key() == Qt.Key_Home:
                         self.center_on_nodes()
@@ -175,24 +175,23 @@ class MainWindow(QMainWindow):
                 s = self.scene()
                 if s is None:
                     return
-                # Collect bounding rect of NodeItem instances
                 try:
-                    from ui_node_item import NodeItem
                     rect = None
                     for item in s.items():
-                        if isinstance(item, NodeItem):
+                        if isinstance(item, (NodeItemInput, NodeItemProcessor, NodeItemOutput)):
                             br = item.sceneBoundingRect()
                             rect = br if rect is None else rect.united(br)
                     if rect is None or rect.isEmpty():
-                        # nothing to center on
                         self.centerOn(0, 0)
                         return
-                    # add margin and fit
+                    # Center on the center of the bounding rect
+                    center = rect.center()
+                    self.centerOn(center)
+                    # Optionally fit in view with margin
                     margin = 40
                     rect = rect.adjusted(-margin, -margin, margin, margin)
                     self.fitInView(rect, Qt.KeepAspectRatio)
                 except Exception:
-                    # fallback: center on origin
                     try:
                         self.centerOn(0, 0)
                     except Exception:
@@ -467,12 +466,12 @@ class MainWindow(QMainWindow):
                 path, _ = QFileDialog.getSaveFileName(self, 'Save Graph', 'saved/graph.json', 'JSON Files (*.json)')
                 if not path:
                     return
-                # collect NodeItem instances in scene order
+                # collect node item instances in scene order
                 nodes_data = []
                 node_items = []
                 for it in self.scene.items():
                     try:
-                        if isinstance(it, NodeItem):
+                        if isinstance(it, (NodeItemInput, NodeItemProcessor, NodeItemOutput)):
                             node_items.append(it)
                     except Exception:
                         pass
@@ -560,7 +559,7 @@ class MainWindow(QMainWindow):
                 try:
                     for it in list(self.scene.items()):
                         try:
-                            if isinstance(it, NodeItem):
+                            if isinstance(it, (NodeItemInput, NodeItemProcessor, NodeItemOutput)):
                                 # remove backend node
                                 n = getattr(it, 'node', None)
                                 try:
@@ -612,7 +611,15 @@ class MainWindow(QMainWindow):
                         except Exception:
                             pass
                         self.graph.add_node(node)
-                        item = NodeItem(node)
+                        if hasattr(node, 'node_type'):
+                            if node.node_type == 'input':
+                                item = NodeItemInput(node)
+                            elif node.node_type == 'output':
+                                item = NodeItemOutput(node)
+                            else:
+                                item = NodeItemProcessor(node)
+                        else:
+                            item = NodeItemProcessor(node)
                         pos = nd.get('pos', [0,0])
                         try:
                             item.setPos(pos[0], pos[1])
@@ -721,7 +728,15 @@ class MainWindow(QMainWindow):
 
         for i in nodes:
             self.graph.add_node(i)
-            node_ui = NodeItem(i)
+            if hasattr(i, 'node_type'):
+                if i.node_type == 'input':
+                    node_ui = NodeItemInput(i)
+                elif i.node_type == 'output':
+                    node_ui = NodeItemOutput(i)
+                else:
+                    node_ui = NodeItemProcessor(i)
+            else:
+                node_ui = NodeItemProcessor(i)
             node_ui.setPos(250 * len(self.graph.nodes), 100)
             self.scene.addItem(node_ui)
     
@@ -738,12 +753,30 @@ class MainWindow(QMainWindow):
 
         for i in nodes:
             self.graph.add_node(i)
-            node_ui = NodeItem(i)
+            if hasattr(i, 'node_type'):
+                if i.node_type == 'input':
+                    node_ui = NodeItemInput(i)
+                elif i.node_type == 'output':
+                    node_ui = NodeItemOutput(i)
+                else:
+                    node_ui = NodeItemProcessor(i)
+            else:
+                node_ui = NodeItemProcessor(i)
             node_ui.setPos(250 * len(self.graph.nodes), 100)
             self.scene.addItem(node_ui)
         
-        NodeItem(nodes[2]).setPos(300, 0)
-        NodeItem(nodes[3]).setPos(500, 0)
+        if hasattr(nodes[2], 'node_type') and nodes[2].node_type == 'input':
+            NodeItemInput(nodes[2]).setPos(300, 0)
+        elif hasattr(nodes[2], 'node_type') and nodes[2].node_type == 'output':
+            NodeItemOutput(nodes[2]).setPos(300, 0)
+        else:
+            NodeItemProcessor(nodes[2]).setPos(300, 0)
+        if hasattr(nodes[3], 'node_type') and nodes[3].node_type == 'input':
+            NodeItemInput(nodes[3]).setPos(500, 0)
+        elif hasattr(nodes[3], 'node_type') and nodes[3].node_type == 'output':
+            NodeItemOutput(nodes[3]).setPos(500, 0)
+        else:
+            NodeItemProcessor(nodes[3]).setPos(500, 0)
     
     def _add_test_nodes(self):
         nodes = []
@@ -764,7 +797,7 @@ class MainWindow(QMainWindow):
         positions = [(0,0), (200,0), (400,0), (600,0), (200,120), (200, 240), (0,120), (0,240), (200,360)]
 
         # set initial value on ValueStringNode before creating UI so the
-        # editable widget picks up the value during NodeItem construction
+        # editable widget picks up the value during node item construction
         try:
             nodes[4].value = 'atkinson'
             try:
@@ -806,11 +839,18 @@ class MainWindow(QMainWindow):
         except Exception: pass
 
         for i, pos in zip(nodes, positions):
-            node_ui = NodeItem(i)
+            if hasattr(i, 'node_type'):
+                if i.node_type == 'input':
+                    node_ui = NodeItemInput(i)
+                elif i.node_type == 'output':
+                    node_ui = NodeItemOutput(i)
+                else:
+                    node_ui = NodeItemProcessor(i)
+            else:
+                node_ui = NodeItemProcessor(i)
             node_ui.setPos(pos[0], pos[1])
             self.scene.addItem(node_ui)
 
-        
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
