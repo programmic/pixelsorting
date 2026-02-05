@@ -31,15 +31,11 @@ def _safe_serialize(obj):
         # dicts
         if isinstance(obj, dict):
             return {str(k): _safe_serialize(v) for k, v in obj.items()}
-        # PIL Image -> store summary metadata only
+        # PIL Image -> do not serialize, return None
         try:
             from PIL.Image import Image as _PILImage
             if isinstance(obj, _PILImage):
-                return {
-                    '__type__': 'PIL.Image',
-                    'size': getattr(obj, 'size', None),
-                    'mode': getattr(obj, 'mode', None)
-                }
+                return None
         except Exception:
             pass
         # fallback to repr string
@@ -492,13 +488,18 @@ class MainWindow(QMainWindow):
                                 attrs['value'] = getattr(n, 'value')
                         except Exception:
                             pass
-                        # also capture output caches
+                        # also capture output caches, but skip images
                         outputs = {}
                         try:
                             for oname, out in n.outputs.items():
                                 try:
-                                    val = getattr(out, '_cache', None)
-                                    outputs[oname] = _safe_serialize(val)
+                                    # Only save non-image outputs
+                                    if hasattr(out, 'socket_type') and str(getattr(out, 'socket_type', '')) in [
+                                        'SocketType.PIL_IMG', 'SocketType.PIL_IMG_MONOCH', 'SocketType.COLOR', 'SocketType.LIST_COLORS']:
+                                        outputs[oname] = None
+                                    else:
+                                        val = getattr(out, '_cache', None)
+                                        outputs[oname] = _safe_serialize(val)
                                 except Exception:
                                     outputs[oname] = None
                         except Exception:
@@ -626,14 +627,20 @@ class MainWindow(QMainWindow):
                         except Exception:
                             pass
                         self.scene.addItem(item)
-                        # restore outputs cache if present
+                        # restore outputs cache if present, but skip images and mark them dirty
                         try:
                             outs = nd.get('outputs', {}) or {}
                             for oname, oval in outs.items():
                                 try:
                                     if oname in node.outputs:
-                                        node.outputs[oname]._cache = oval
-                                        node.outputs[oname]._dirty = False
+                                        out = node.outputs[oname]
+                                        if hasattr(out, 'socket_type') and str(getattr(out, 'socket_type', '')) in [
+                                            'SocketType.PIL_IMG', 'SocketType.PIL_IMG_MONOCH', 'SocketType.COLOR', 'SocketType.LIST_COLORS']:
+                                            out._cache = None
+                                            out._dirty = True
+                                        else:
+                                            out._cache = oval
+                                            out._dirty = False
                                 except Exception:
                                     pass
                         except Exception:

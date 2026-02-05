@@ -2010,32 +2010,34 @@ def reduce_size(
 
     if isinstance(resolution, str):
         res_l = resolution.lower()
-        if res_l.isdigit(): # single number: width, preserve aspect ratio
-            print("Single number resolution provided, preserving aspect ratio.")
-            target_w = int(res_l)
-        else: # parse width x height
+        # Accept float strings for single number (e.g., '1598.0')
+        try:
+            as_float = float(res_l)
+            if as_float.is_integer():
+                print("Single number resolution provided (float), preserving aspect ratio.")
+                target_w = int(round(as_float))
+            else:
+                # Not an integer, treat as error
+                raise ValueError
+        except ValueError:
+            # Not a single float, try WxH parsing
             try:
-                # Try common delimiters
-                if "x" in res_l:
-                    parts = res_l.split("x")
-                elif "," in res_l:
-                    parts = res_l.split(",")
-                elif " " in res_l:
-                    parts = res_l.split(" ")
-                elif "*" in res_l:
-                    parts = res_l.split("*")
-                elif "-" in res_l:
-                    parts = res_l.split("-")
-                elif "(" in res_l and ")" in res_l:
-                    res_l = res_l.replace("(", "").replace(")", "")
-                    parts = res_l.split(",")
+                # Accept float values in WxH (e.g., '1598.0x600.0')
+                for delim in ("x", ",", " ", "*", "-"):
+                    if delim in res_l:
+                        parts = res_l.split(delim)
+                        break
                 else:
-                    raise ValueError("Delimiter not found in resolution string.")
+                    if "(" in res_l and ")" in res_l:
+                        res_l = res_l.replace("(", "").replace(")", "")
+                        parts = res_l.split(",")
+                    else:
+                        raise ValueError("Delimiter not found in resolution string.")
 
                 if len(parts) != 2:
                     raise ValueError("Resolution string must contain exactly one width and one height.")
-                
-                target_w, target_h = map(int, parts)
+                # Accept float values, round to int
+                target_w, target_h = (int(round(float(p))) for p in parts)
             except Exception as e:
                 raise ValueError(f"Failed to parse resolution string '{resolution}'. Expected format 'WxH' or similar.") from e
 

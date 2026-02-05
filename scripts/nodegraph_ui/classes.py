@@ -133,7 +133,6 @@ class InputNode(Node):
         """
         self.mark_dirty()
     
-
 class ProcessorNode(Node):
     """Processor nodes have both input and output sockets."""
     pass
@@ -141,6 +140,19 @@ class ProcessorNode(Node):
 class OutputNode(Node):
     """Output nodes have no output sockets, but can easily be extended to have graphical output controls like image viewers, toFile renderers, etc."""
     pass
+
+class rerouteNode(Node):
+    """A simple node that has one input and one output of the same type, and just passes the value through. Useful for organizing complex graphs."""
+    def __init__(self):
+        super().__init__()
+        self.inputs['in'] = InputSocket(self, 'in', SocketType.UNDEFINED)
+        self.outputs['out'] = OutputSocket(self, 'out', SocketType.UNDEFINED)
+    
+    def compute(self):
+        inp = self.inputs['in']
+        out = self.outputs['out']
+        if inp.connection is not None:
+            out.set(inp.get())
 
 class Graph:
     def __init__(self):
