@@ -3,10 +3,10 @@
 import sys
 from PyQt5.QtWidgets import QGraphicsView
 from PyQt5.QtWidgets import QApplication, QGraphicsView, QMainWindow
-from PyQt5.QtCore import Qt, QEvent
+from PyQt5.QtCore import Qt, QEvent, QVariantAnimation
 
 from PyQt5.QtWidgets import QWidget, QHBoxLayout, QListWidget, QListWidgetItem, QToolBar
-from PyQt5.QtCore import Qt, QEvent
+from PyQt5.QtCore import Qt, QEvent, QVariantAnimation
 
 from .ui_node_scene import NodeScene
 from .ui_node_item import NodeItemInput, NodeItemProcessor, NodeItemOutput
@@ -87,6 +87,11 @@ class MainWindow(QMainWindow):
                 super().__init__(*args, **kwargs)
                 self._panning = False
                 self._pan_start = None
+                # make zoom anchor follow the mouse for Ctrl+wheel zoom
+                try:
+                    self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+                except Exception:
+                    pass
                 # accept drops from palette
                 self.setAcceptDrops(True)
                 # ensure viewport also accepts drops
@@ -238,6 +243,99 @@ class MainWindow(QMainWindow):
                     event.accept()
                     return
                 super().mouseReleaseEvent(event)
+
+            def wheelEvent(self, event):
+                # Ctrl + wheel -> smooth zoom; Shift + wheel -> horizontal pan
+                try:
+                    mods = event.modifiers()
+                    # Smooth animated zoom when Ctrl is held
+                    if mods & Qt.ControlModifier:
+                        try:
+                            delta = event.angleDelta().y()
+                        except Exception:
+                            try:
+                                delta = event.delta()
+                            except Exception:
+                                delta = 0
+
+                        steps = delta / 120.0 if delta else 0
+                        factor = 1.15 ** steps
+
+                        # current uniform scale
+                        try:
+                            cur = float(self.transform().m11())
+                        except Exception:
+                            cur = 1.0
+                        target = cur * factor
+                        min_s, max_s = 0.1, 6.0
+                        target = max(min_s, min(max_s, target))
+
+                        # stop any existing animation
+                        try:
+                            if hasattr(self, '_zoom_anim') and self._zoom_anim is not None:
+                                try:
+                                    self._zoom_anim.stop()
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+
+                        anim = QVariantAnimation(self)
+                        anim.setDuration(220)
+                        anim.setStartValue(cur)
+                        anim.setEndValue(target)
+                        self._zoom_last = cur
+
+                        def on_val(v):
+                            try:
+                                prev = getattr(self, '_zoom_last', None)
+                                if prev is None:
+                                    prev = v
+                                factor_rel = (v / prev) if prev else 1.0
+                                self.scale(factor_rel, factor_rel)
+                                self._zoom_last = v
+                            except Exception:
+                                pass
+
+                        def on_finished():
+                            try:
+                                self._zoom_anim = None
+                                self._zoom_last = None
+                            except Exception:
+                                pass
+
+                        anim.valueChanged.connect(on_val)
+                        anim.finished.connect(on_finished)
+                        self._zoom_anim = anim
+                        anim.start()
+                        event.accept()
+                        return
+
+                    # Shift + wheel -> horizontal scroll by pixels (not screen units)
+                    if mods & Qt.ShiftModifier:
+                        try:
+                            pd = event.pixelDelta()
+                            if not pd.isNull():
+                                d = pd.y()
+                            else:
+                                d = event.angleDelta().y()
+                        except Exception:
+                            try:
+                                d = event.angleDelta().y()
+                            except Exception:
+                                d = 0
+                        steps = d / 120.0 if d else 0
+                        scroll_pixels = int(steps * 40)
+                        try:
+                            hbar = self.horizontalScrollBar()
+                            hbar.setValue(hbar.value() - scroll_pixels)
+                        except Exception:
+                            pass
+                        event.accept()
+                        return
+                except Exception:
+                    pass
+                super().wheelEvent(event)
 
             def dragEnterEvent(self, event):
                 try:

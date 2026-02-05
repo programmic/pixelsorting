@@ -1,7 +1,7 @@
 # scripts/nodegraph_ui/ui_node_scene.py
 
 from PyQt5.QtWidgets import QGraphicsScene
-from PyQt5.QtCore import QTimer
+from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtGui import QColor
 
 from .ui_connection_item import ConnectionItem
@@ -18,6 +18,8 @@ class NodeScene(QGraphicsScene):
         self._conn_timer = QTimer(self)
         self._conn_timer.timeout.connect(self.update_connections)
         self._conn_timer.start(60)  # ~16 FPS — sufficient for smooth interaction
+        # visual connection currently highlighted as 'would be overwritten'
+        self._highlighted_connection = None
     def create_node_from_key(self, cls_name: str, scene_pos):
         """Create a node by class name and place it at scene_pos.
 
@@ -157,6 +159,74 @@ class NodeScene(QGraphicsScene):
         # Update temporary connection end if any
         if hasattr(self, "temp_connection"):
             self.temp_connection.update_end(event.scenePos())
+            # Check if hovering over an occupied input socket
+            items = self.items(event.scenePos())
+            hovered_input_ui = None
+            for item in items:
+                if isinstance(item, SocketItem) and not item.is_output:
+                    if getattr(item.socket, 'connection', None) is not None:
+                        hovered_input_ui = item
+                        break
+
+            if hovered_input_ui is not None:
+                # Change cursor to indicate override (compatibility fallback)
+                try:
+                    self.views()[0].setCursor(Qt.DragCopyCursor)
+                except Exception:
+                    try:
+                        self.views()[0].setCursor(Qt.CursorShape.DragCopyCursor)
+                    except Exception:
+                        pass
+
+                # Find the visual ConnectionItem that ends at this input and highlight it
+                new_highlight = None
+                for it in self.items():
+                    if isinstance(it, ConnectionItem):
+                        try:
+                            if getattr(it.end_socket, 'socket', None) is hovered_input_ui.socket:
+                                new_highlight = it
+                                break
+                        except Exception:
+                            pass
+
+                if new_highlight is not self._highlighted_connection:
+                    # Un-highlight previous
+                    try:
+                        if self._highlighted_connection is not None:
+                            try:
+                                self._highlighted_connection.highlight_off()
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+                    # Highlight new
+                    try:
+                        if new_highlight is not None:
+                            try:
+                                new_highlight.highlight_on()
+                            except Exception:
+                                pass
+                        self._highlighted_connection = new_highlight
+                    except Exception:
+                        pass
+            else:
+                try:
+                    self.views()[0].setCursor(Qt.ArrowCursor)
+                except Exception:
+                    try:
+                        self.views()[0].setCursor(Qt.CursorShape.ArrowCursor)
+                    except Exception:
+                        pass
+                # Clear any highlighted visual connection
+                try:
+                    if self._highlighted_connection is not None:
+                        try:
+                            self._highlighted_connection.highlight_off()
+                        except Exception:
+                            pass
+                        self._highlighted_connection = None
+                except Exception:
+                    pass
 
         # Centralized hover handling for sockets: detect socket under cursor
         items = self.items(event.scenePos())
@@ -212,6 +282,26 @@ class NodeScene(QGraphicsScene):
             out_socket = self.temp_connection.start_socket.socket
             in_socket = target_socket.socket
 
+            # If input socket is occupied, disconnect old connection first
+            if getattr(in_socket, 'connection', None) is not None:
+                # Remove backend connection
+                try:
+                    self.graph.disconnect_input(in_socket)
+                except Exception:
+                    pass
+
+                # Also remove any existing visual ConnectionItem that targeted this input
+                for it in list(self.items()):
+                    if isinstance(it, ConnectionItem):
+                        try:
+                            if getattr(it.end_socket, 'socket', None) is in_socket:
+                                try:
+                                    self.removeItem(it)
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+
             if self.graph.connect(out_socket, in_socket):
                 print(f"[ui_node_scene] Connected {type(out_socket.node).__name__}({out_socket.name}) -> {type(in_socket.node).__name__}({in_socket.name})")
                 self.temp_connection.set_end_socket(target_socket)
@@ -236,12 +326,50 @@ class NodeScene(QGraphicsScene):
                 except Exception:
                     pass
 
+                # Un-highlight any visual connection that was marked for overwrite
+                try:
+                    if self._highlighted_connection is not None:
+                        try:
+                            self._highlighted_connection.highlight_off()
+                        except Exception:
+                            pass
+                        self._highlighted_connection = None
+                except Exception:
+                    pass
+
                 del self.temp_connection
+                # Reset cursor
+                try:
+                    self.views()[0].setCursor(Qt.ArrowCursor)
+                except Exception:
+                    try:
+                        self.views()[0].setCursor(Qt.CursorShape.ArrowCursor)
+                    except Exception:
+                        pass
                 return
 
         # failed
+        # Clear highlight if present
+        try:
+            if self._highlighted_connection is not None:
+                try:
+                    self._highlighted_connection.highlight_off()
+                except Exception:
+                    pass
+                self._highlighted_connection = None
+        except Exception:
+            pass
+
         self.removeItem(self.temp_connection)
         del self.temp_connection
+        # Reset cursor
+        try:
+            self.views()[0].setCursor(Qt.CursorShape.ArrowCursor)
+        except Exception:
+            try:
+                self.views()[0].setCursor(Qt.ArrowCursor)
+            except Exception:
+                pass
 
         super().mouseReleaseEvent(event)
 
@@ -261,11 +389,11 @@ class NodeScene(QGraphicsScene):
         """
         try:
             spacing = 20
-            # subtle dot color
-            dot_color = QColor(90, 90, 90, 120)
+            # larger, higher-contrast dot for the snapping grid
+            dot_color = QColor(90, 90, 90, 200)
+            dot_size = 2
             painter.save()
-            painter.setPen(dot_color)
-
+            painter.setPen(Qt.NoPen)
             left = int(rect.left())
             top = int(rect.top())
             right = int(rect.right())
@@ -274,13 +402,13 @@ class NodeScene(QGraphicsScene):
             start_x = left - (left % spacing)
             start_y = top - (top % spacing)
 
-            # draw small dots at grid intersections
+            # draw slightly larger filled squares at grid intersections
+            half = dot_size // 2
             x = start_x
             while x <= right:
                 y = start_y
                 while y <= bottom:
-                    # draw a tiny point (1x1) — use drawPoint for performance
-                    painter.drawPoint(x, y)
+                    painter.fillRect(x - half, y - half, dot_size, dot_size, dot_color)
                     y += spacing
                 x += spacing
 

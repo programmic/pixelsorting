@@ -15,6 +15,16 @@ class ConnectionItem(QGraphicsPathItem):
         # end_pos is used while dragging (temporary) or if there is no end_socket.
         self.end_socket = None
         self.end_pos = start_socket.center()
+        # Highlight flag used by the scene to indicate this connection
+        # would be overwritten. When highlighted, `update_path` will
+        # draw the connection in a prominent red color.
+        self._highlighted = False
+
+    def highlight_on(self):
+        self._highlighted = True
+
+    def highlight_off(self):
+        self._highlighted = False
 
     def update_end(self, pos):
         # While dragging, update a free-floating end position and clear any
@@ -63,7 +73,10 @@ class ConnectionItem(QGraphicsPathItem):
         grad = QLinearGradient(p1.x(), p1.y(), p2.x(), p2.y())
         grad.setColorAt(0.0, start_color)
         grad.setColorAt(1.0, end_color)
-
-        pen = QPen(QBrush(grad), 4.0, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+        # If highlighted, override the gradient with a solid red pen
+        if getattr(self, '_highlighted', False):
+            pen = QPen(QColor(220, 30, 30), 6.0, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+        else:
+            pen = QPen(QBrush(grad), 4.0, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
         self.setPen(pen)
         self.setPath(path)

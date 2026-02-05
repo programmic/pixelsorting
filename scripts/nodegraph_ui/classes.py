@@ -170,7 +170,10 @@ class Graph:
             return False
         if self.creates_cycle(out.node, inp.node):
             return False
-        
+
+        # Remove any previous connection to this input socket
+        self.disconnect_input(inp)
+
         conn = Connection(out, inp)
         self.add_connection(conn)
 
@@ -210,8 +213,7 @@ class Graph:
         return False
 
     def can_connect(self, output_socket: OutputSocket, input_socket: InputSocket) -> bool:
-        if input_socket.connection is not None:
-            return False
+        # Allow connection regardless of occupancy; occupancy handled elsewhere
         if output_socket.socket_type == SocketType.UNDEFINED:
             return True
         if input_socket.socket_type == SocketType.UNDEFINED:
