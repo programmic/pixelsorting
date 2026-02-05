@@ -16,6 +16,26 @@ from .classes import SocketType, InputNode, OutputNode, ProcessorNode
 
 # NodeItemInput: for InputNode
 class NodeItemInput(QGraphicsRectItem):
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_offset = event.scenePos() - self.pos()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() & Qt.LeftButton:
+            modifiers = event.modifiers()
+            pos = event.scenePos()
+            if modifiers & Qt.ControlModifier:
+                # Snap to next 20th unit, respecting original offset
+                offset = getattr(self, '_drag_offset', None)
+                if offset is None:
+                    offset = pos - self.pos()
+                snapped_x = round((pos.x() - offset.x()) / 20) * 20
+                snapped_y = round((pos.y() - offset.y()) / 20) * 20
+                self.setPos(snapped_x, snapped_y)
+                event.accept()
+                return
+        super().mouseMoveEvent(event)
     WIDTH = 160
     HEIGHT = 100
     SOCKET_SPACING = 20
@@ -139,6 +159,25 @@ class NodeItemInput(QGraphicsRectItem):
 
 # NodeItemProcessor: for ProcessorNode
 class NodeItemProcessor(QGraphicsRectItem):
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_offset = event.scenePos() - self.pos()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() & Qt.LeftButton:
+            modifiers = event.modifiers()
+            pos = event.scenePos()
+            if modifiers & Qt.ControlModifier:
+                offset = getattr(self, '_drag_offset', None)
+                if offset is None:
+                    offset = pos - self.pos()
+                snapped_x = round((pos.x() - offset.x()) / 20) * 20
+                snapped_y = round((pos.y() - offset.y()) / 20) * 20
+                self.setPos(snapped_x, snapped_y)
+                event.accept()
+                return
+        super().mouseMoveEvent(event)
     WIDTH = 160
     HEIGHT = 100
     SOCKET_SPACING = 20
@@ -202,6 +241,25 @@ class NodeItemProcessor(QGraphicsRectItem):
 
 # NodeItemOutput: for OutputNode
 class NodeItemOutput(QGraphicsRectItem):
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_offset = event.scenePos() - self.pos()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() & Qt.LeftButton:
+            modifiers = event.modifiers()
+            pos = event.scenePos()
+            if modifiers & Qt.ControlModifier:
+                offset = getattr(self, '_drag_offset', None)
+                if offset is None:
+                    offset = pos - self.pos()
+                snapped_x = round((pos.x() - offset.x()) / 20) * 20
+                snapped_y = round((pos.y() - offset.y()) / 20) * 20
+                self.setPos(snapped_x, snapped_y)
+                event.accept()
+                return
+        super().mouseMoveEvent(event)
     WIDTH = 160
     HEIGHT = 100
     SOCKET_SPACING = 20
@@ -496,29 +554,41 @@ class NodeItemOutput(QGraphicsRectItem):
             self._display_image(img)
 
     def _display_image(self, img):
-        # Always convert to QImage for QPixmap
-        qimg = None
-        try:
-            from PIL.ImageQt import ImageQt
-            qimg_obj = ImageQt(img)
-            if hasattr(qimg_obj, 'toqimage'):
-                qimg = qimg_obj.toqimage()
-            elif isinstance(qimg_obj, QImage):
-                qimg = qimg_obj
-            else:
-                # fallback: try to convert via buffer
+        # Cache scaled QPixmap to avoid repeated rescaling of large images
+        if not hasattr(self, '_scaled_pixmap_cache'):
+            self._scaled_pixmap_cache = {'img_id': None, 'img_size': None, 'pixmap': None}
+        cache = self._scaled_pixmap_cache
+        img_id = id(img)
+        img_size = getattr(img, 'size', None)
+        target_size = (self.WIDTH - 10, 100)
+
+        # Only rescale if image object or size changed
+        if cache['img_id'] != img_id or cache['img_size'] != img_size:
+            qimg = None
+            try:
+                from PIL.ImageQt import ImageQt
+                qimg_obj = ImageQt(img)
+                if hasattr(qimg_obj, 'toqimage'):
+                    qimg = qimg_obj.toqimage()
+                elif isinstance(qimg_obj, QImage):
+                    qimg = qimg_obj
+                else:
+                    buf = io.BytesIO()
+                    img.save(buf, "PNG")
+                    qimg = QImage.fromData(buf.getvalue())
+            except Exception:
                 buf = io.BytesIO()
                 img.save(buf, "PNG")
                 qimg = QImage.fromData(buf.getvalue())
-        except Exception:
-            buf = io.BytesIO()
-            img.save(buf, "PNG")
-            qimg = QImage.fromData(buf.getvalue())
-        if qimg is not None:
-            pix = QPixmap.fromImage(qimg)
-            self._last_qpixmap = pix
-            scaled_pix = pix.scaled(self.WIDTH - 10, 100, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            self._pix_item.setPixmap(scaled_pix)
+            if qimg is not None:
+                pix = QPixmap.fromImage(qimg)
+                scaled_pix = pix.scaled(*target_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                cache['img_id'] = img_id
+                cache['img_size'] = img_size
+                cache['pixmap'] = scaled_pix
+                self._last_qpixmap = pix
+        if cache['pixmap'] is not None:
+            self._pix_item.setPixmap(cache['pixmap'])
 
     def _setup_render_button(self):
         run_btn = QPushButton("RUN")
