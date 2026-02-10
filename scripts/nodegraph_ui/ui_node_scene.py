@@ -1,6 +1,6 @@
 # scripts/nodegraph_ui/ui_node_scene.py
 
-from PyQt5.QtWidgets import QGraphicsScene
+from PyQt5.QtWidgets import QGraphicsScene, QGraphicsProxyWidget
 from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtGui import QColor
 
@@ -169,44 +169,68 @@ class NodeScene(QGraphicsScene):
                         break
 
             if hovered_input_ui is not None:
-                # Change cursor to indicate override (compatibility fallback)
+                # Change cursor and highlight only if the new connection would be valid
                 try:
-                    self.views()[0].setCursor(Qt.DragCopyCursor)
+                    can_override = self.graph.can_connect(self.temp_connection.start_socket.socket, hovered_input_ui.socket)
                 except Exception:
-                    try:
-                        self.views()[0].setCursor(Qt.CursorShape.DragCopyCursor)
-                    except Exception:
-                        pass
+                    can_override = False
 
-                # Find the visual ConnectionItem that ends at this input and highlight it
-                new_highlight = None
-                for it in self.items():
-                    if isinstance(it, ConnectionItem):
+                if can_override:
+                    try:
+                        self.views()[0].setCursor(Qt.DragCopyCursor)
+                    except Exception:
                         try:
-                            if getattr(it.end_socket, 'socket', None) is hovered_input_ui.socket:
-                                new_highlight = it
-                                break
+                            self.views()[0].setCursor(Qt.CursorShape.DragCopyCursor)
                         except Exception:
                             pass
 
-                if new_highlight is not self._highlighted_connection:
-                    # Un-highlight previous
+                    # Find the visual ConnectionItem that ends at this input and highlight it
+                    new_highlight = None
+                    for it in self.items():
+                        if isinstance(it, ConnectionItem):
+                            try:
+                                if getattr(it.end_socket, 'socket', None) is hovered_input_ui.socket:
+                                    new_highlight = it
+                                    break
+                            except Exception:
+                                pass
+
+                    if new_highlight is not self._highlighted_connection:
+                        # Un-highlight previous
+                        try:
+                            if self._highlighted_connection is not None:
+                                try:
+                                    self._highlighted_connection.highlight_off()
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+                        # Highlight new
+                        try:
+                            if new_highlight is not None:
+                                try:
+                                    new_highlight.highlight_on()
+                                except Exception:
+                                    pass
+                            self._highlighted_connection = new_highlight
+                        except Exception:
+                            pass
+                else:
+                    # incompatible: show forbidden cursor and clear any highlight
+                    try:
+                        self.views()[0].setCursor(Qt.ForbiddenCursor)
+                    except Exception:
+                        try:
+                            self.views()[0].setCursor(Qt.CursorShape.ForbiddenCursor)
+                        except Exception:
+                            pass
                     try:
                         if self._highlighted_connection is not None:
                             try:
                                 self._highlighted_connection.highlight_off()
                             except Exception:
                                 pass
-                    except Exception:
-                        pass
-                    # Highlight new
-                    try:
-                        if new_highlight is not None:
-                            try:
-                                new_highlight.highlight_on()
-                            except Exception:
-                                pass
-                        self._highlighted_connection = new_highlight
+                            self._highlighted_connection = None
                     except Exception:
                         pass
             else:
@@ -264,6 +288,41 @@ class NodeScene(QGraphicsScene):
         # forward to base to allow item-specific handling
         super().mousePressEvent(event)
 
+    def mouseDoubleClickEvent(self, event):
+        # Detect double-clicks on proxy widgets (viewer preview) and
+        # forward to any callback they expose. This handles cases where
+        # widget-level double-clicks are not delivered on some platforms.
+        items = self.items(event.scenePos())
+        for it in items:
+            try:
+                # If the item is a proxy widget created for viewer preview,
+                # it exposes `_on_double_click` or `_on_pixmap_double_click`.
+                if hasattr(it, '_on_double_click') and callable(getattr(it, '_on_double_click')):
+                    try:
+                        it._on_double_click(event)
+                    except Exception:
+                        pass
+                    try:
+                        event.accept()
+                    except Exception:
+                        pass
+                    return
+                # Fallback: some proxies may store the callback under a different name
+                if hasattr(it, '_on_pixmap_double_click') and callable(getattr(it, '_on_pixmap_double_click')):
+                    try:
+                        it._on_pixmap_double_click(event)
+                    except Exception:
+                        pass
+                    try:
+                        event.accept()
+                    except Exception:
+                        pass
+                    return
+            except Exception:
+                pass
+
+        super().mouseDoubleClickEvent(event)
+
     def mouseReleaseEvent(self, event):
         # forward to base
         if not hasattr(self, "temp_connection"):
@@ -282,25 +341,59 @@ class NodeScene(QGraphicsScene):
             out_socket = self.temp_connection.start_socket.socket
             in_socket = target_socket.socket
 
-            # If input socket is occupied, disconnect old connection first
+            # If input socket is occupied, only allow overwrite if the new connection is compatible
             if getattr(in_socket, 'connection', None) is not None:
-                # Remove backend connection
                 try:
-                    self.graph.disconnect_input(in_socket)
+                    can_override = self.graph.can_connect(out_socket, in_socket)
                 except Exception:
-                    pass
+                    can_override = False
 
-                # Also remove any existing visual ConnectionItem that targeted this input
-                for it in list(self.items()):
-                    if isinstance(it, ConnectionItem):
+                if can_override:
+                    # Remove backend connection
+                    try:
+                        self.graph.disconnect_input(in_socket)
+                    except Exception:
+                        pass
+
+                    # Also remove any existing visual ConnectionItem that targeted this input
+                    for it in list(self.items()):
+                        if isinstance(it, ConnectionItem):
+                            try:
+                                if getattr(it.end_socket, 'socket', None) is in_socket:
+                                    try:
+                                        self.removeItem(it)
+                                    except Exception:
+                                        pass
+                            except Exception:
+                                pass
+                else:
+                    # incompatible: abort connection attempt and clean up
+                    try:
+                        if self._highlighted_connection is not None:
+                            try:
+                                self._highlighted_connection.highlight_off()
+                            except Exception:
+                                pass
+                            self._highlighted_connection = None
+                    except Exception:
+                        pass
+                    try:
+                        self.removeItem(self.temp_connection)
+                    except Exception:
+                        pass
+                    try:
+                        del self.temp_connection
+                    except Exception:
+                        pass
+                    # Reset cursor
+                    try:
+                        self.views()[0].setCursor(Qt.ArrowCursor)
+                    except Exception:
                         try:
-                            if getattr(it.end_socket, 'socket', None) is in_socket:
-                                try:
-                                    self.removeItem(it)
-                                except Exception:
-                                    pass
+                            self.views()[0].setCursor(Qt.CursorShape.ArrowCursor)
                         except Exception:
                             pass
+                    return
 
             if self.graph.connect(out_socket, in_socket):
                 print(f"[ui_node_scene] Connected {type(out_socket.node).__name__}({out_socket.name}) -> {type(in_socket.node).__name__}({in_socket.name})")
@@ -348,6 +441,80 @@ class NodeScene(QGraphicsScene):
                         pass
                 return
 
+        # If release on empty space while Ctrl is held, create a reroute node
+        try:
+            if not target_socket and (event.modifiers() & Qt.ControlModifier):
+                try:
+                    from .classes import rerouteNode, SocketType
+                    from .ui_node_item import NodeItemProcessor
+                except Exception:
+                    rerouteNode = None
+                    NodeItemProcessor = None
+
+                if rerouteNode is not None and NodeItemProcessor is not None:
+                    try:
+                        start_ui = self.temp_connection.start_socket
+                        out_backend = start_ui.socket
+                        # create backend reroute node adopting upstream socket type
+                        rr = rerouteNode(getattr(out_backend, 'socket_type', SocketType.UNDEFINED))
+                        # add to backend graph
+                        try:
+                            self.graph.add_node(rr)
+                        except Exception:
+                            pass
+
+                        # create UI node for reroute and place at release point
+                        try:
+                            item = NodeItemProcessor(rr)
+                            item.setPos(event.scenePos())
+                            self.addItem(item)
+                        except Exception:
+                            item = None
+
+                        # find the socket UI items for reroute node
+                        in_ui = None
+                        for it in self.items():
+                            if isinstance(it, SocketItem) and getattr(it, 'socket', None) is rr.inputs.get('in'):
+                                in_ui = it
+                                break
+
+                        # create backend connection and visual ConnectionItem
+                        if in_ui is not None:
+                            try:
+                                # connect backend
+                                self.graph.connect(out_backend, rr.inputs['in'])
+                            except Exception:
+                                pass
+                            try:
+                                conn_item = ConnectionItem(start_ui)
+                                conn_item.set_end_socket(in_ui)
+                                self.addItem(conn_item)
+                            except Exception:
+                                pass
+                        # clean up temporary connection visual
+                        try:
+                            if hasattr(self, 'temp_connection'):
+                                try:
+                                    self.removeItem(self.temp_connection)
+                                except Exception:
+                                    pass
+                                try:
+                                    del self.temp_connection
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+                        # reset cursor
+                        try:
+                            self.views()[0].setCursor(Qt.ArrowCursor)
+                        except Exception:
+                            pass
+                        return
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
         # failed
         # Clear highlight if present
         try:
@@ -390,7 +557,7 @@ class NodeScene(QGraphicsScene):
         try:
             spacing = 20
             # larger, higher-contrast dot for the snapping grid
-            dot_color = QColor(90, 90, 90, 200)
+            dot_color = QColor(0, 0, 0, 50)
             dot_size = 2
             painter.save()
             painter.setPen(Qt.NoPen)

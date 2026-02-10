@@ -405,6 +405,108 @@ class ContrastMaskNode(ProcessorNode):
 
         self.outputs["mask"]._cache = mask
 
+class LuminanceMaskNode(ProcessorNode):
+    def __init__(self):
+        super().__init__()
+        self.category = "Mask Nodes"
+        self.display_name = "Luminance Mask"
+        self.description = "Generates a luminance mask from the input image based on specified minimum and maximum luminance limits."
+        self.tooltips_in = {
+            "image": "Input image to generate luminance mask from."
+        }
+        self.inputs["image"] = InputSocket(
+            self, "image", SocketType.PIL_IMG
+        )
+
+        self.inputs["mask"] = InputSocket(
+            self, "mask", SocketType.PIL_IMG_MONOCH, is_optional=True
+        )
+
+        self.outputs["mask"] = OutputSocket(
+            self, "mask", SocketType.PIL_IMG_MONOCH
+        )
+    def compute(self):
+        img = self.inputs["image"].get()
+        mask_input = self.inputs["mask"].get()
+        if img is None:
+            self.outputs["mask"]._cache = None
+            return
+
+        try:
+            print(f"LuminanceMaskNode: computing luminance mask ")
+            if mask_input is not None:
+                mask = passes.generate_luminance_mask(img, mask=mask_input)
+            else:
+                mask = passes.generate_luminance_mask(img)
+        except Exception as e:
+            import traceback
+            print(f"LuminanceMaskNode: Luminance mask failed ({e}), using blank mask.")
+            traceback.print_exc()
+            mask = Image.new("L", img.size, 0)
+
+        self.outputs["mask"]._cache = mask
+
+class NoiseNode(ProcessorNode):
+    def __init__(self):
+        super().__init__()
+        self.display_name = "Add Noise"
+        self.category = "Generative Nodes"
+        self.description = "Adds noise to the input image based on specified amount and noise type."
+        self.tooltips_in = {
+            "image": "Input image to add noise to.",
+            "amount": "Amount of noise to add (0.0 to 1.0).",
+            "noise_type": "Type of noise to add [ GAUSSIAN | SALT_PEPPER | SHOT | UNIFORM | 50_PER_CENT | PERLIN | BLUE | PINK | WHITE ].",
+            "size": "Scale factor for noise types that support size (e.g., Perlin). Ignored by other noise types."
+        }
+        self.tooltips_out = {
+            "image": "Output image with added noise."
+        }
+        
+        self.inputs["image"] = InputSocket(
+            self, "image", SocketType.PIL_IMG
+        )
+
+        self.inputs["amount"] = InputSocket(
+            self, "amount", SocketType.FLOAT
+        )
+
+        self.inputs["noise_type"] = InputSocket(
+            self, "noise_type", SocketType.STRING
+        )
+
+        self.inputs["size"] = InputSocket(
+            self, "size", SocketType.FLOAT, is_optional=True
+        )
+
+        self.outputs["image"] = OutputSocket(
+            self, "image", SocketType.PIL_IMG
+        )
+    
+    def compute(self):
+        img = self.inputs["image"].get()
+        amount = self.inputs["amount"].get()
+        noise_type = self.inputs["noise_type"].get()
+        if img is None:
+            self.outputs["image"]._cache = None
+            return
+
+        if amount is None:
+            amount = 0.05
+        if noise_type is None:
+            noise_type = "GAUSSIAN"
+
+        try:
+            size = self.inputs["size"].get()
+            print(f"NoiseNode: computing noise type={noise_type} amount={amount} size={size}")
+            noised = passes.noise(img, amount=float(amount), noise_type=noise_type, size=size)
+        except Exception as e:
+            import traceback
+            print(f"NoiseNode: Noise addition failed ({e}), using original image.")
+            traceback.print_exc()
+            noised = img
+
+        self.outputs["image"]._cache = noised
+
 class DifferenceNode(ProcessorNode):
     def __init__(self):
         super().__init__()
@@ -516,6 +618,82 @@ class DitherNode(ProcessorNode):
 
         self.outputs["image"]._cache = dithered
 
+class OutlineNode(ProcessorNode):
+    def __init__(self):
+        super().__init__()
+        self.display_name = "Outline"
+        self.category = "Image Effects"
+        self.description = "Detects edges in the input image and produces an outline effect based on specified parameters."
+        self.tooltips_in = {
+            "image": "Input image to be processed for edge detection.",
+            "method": "Edge detection method to use [ SOBEL / CANNY / DOG ].",
+            "threshold": "Threshold value for edge detection sensitivity. Range: 0.0 to 1.0 (float). Values outside this range will be clipped internally.",
+            "limLower": "Low threshold for edge detection (optional). Range: 0.0 to 255.0 (float) or None. If None, computed as threshold * 255.",
+            "limUpper": "High threshold for edge detection (optional). Range: 0.0 to 255.0 (float) or None. If None, computed as min(255, low_threshold * 2)."
+        }
+
+        self.tooltips_out = {
+            "image": "Output image with detected edges outlined."
+        }
+        
+        self.inputs["image"] = InputSocket(
+            self, "image", SocketType.PIL_IMG
+        )
+
+        self.inputs["method"] = InputSocket(
+            self, "method", SocketType.STRING
+        )
+
+        self.inputs["threshold"] = InputSocket(
+            self, "threshold", SocketType.FLOAT
+        )
+
+        self.inputs["limLower"] = InputSocket(
+            self, "limLower", SocketType.FLOAT
+        )
+
+        self.inputs["limUpper"] = InputSocket(
+            self, "limUpper", SocketType.FLOAT
+        )
+
+        self.outputs["image"] = OutputSocket(
+            self, "image", SocketType.PIL_IMG
+        )
+    
+    def compute(self):
+        img = self.inputs["image"].get()
+        limLower = self.inputs["limLower"].get()
+        limUpper = self.inputs["limUpper"].get()
+        if img is None:
+            self.outputs["image"]._cache = None
+            return
+        if limLower is None:
+            limLower = 0.1
+        if limUpper is None:
+            limUpper = 0.3
+
+        try:
+            print(f"OutlineNode: computing outline image")
+            method = self.inputs["method"].get()
+            threshold = self.inputs["threshold"].get()
+            if method is None:
+                method = "Sobel"
+            if threshold is None:
+                threshold = 0.1
+            outlined = passes.find_edges(
+                img,
+                low_threshold=limLower,
+                high_threshold=limUpper,
+                type=method,
+                threshold=threshold
+                )
+        except Exception as e:
+            import traceback
+            print(f"OutlineNode: Outline computation failed ({e}), using original image.")
+            traceback.print_exc()
+            outlined = img
+
+        self.outputs["image"]._cache = outlined
 
 class ValueIntNode(InputNode):
     def __init__(self):

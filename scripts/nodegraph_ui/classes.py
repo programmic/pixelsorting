@@ -141,18 +141,43 @@ class OutputNode(Node):
     """Output nodes have no output sockets, but can easily be extended to have graphical output controls like image viewers, toFile renderers, etc."""
     pass
 
-class rerouteNode(Node):
-    """A simple node that has one input and one output of the same type, and just passes the value through. Useful for organizing complex graphs."""
-    def __init__(self):
+class rerouteNode(ProcessorNode):
+    """A simple node that has one input and one output of the same type,
+    and simply forwards the value. Useful for organizing complex graphs
+    and for creating inline reroute points when dragging connections.
+
+    The constructor accepts an optional `socket_type` so the reroute can
+    adopt the type of the upstream socket for nicer visuals and type
+    checking.
+    """
+    def __init__(self, socket_type: SocketType = SocketType.UNDEFINED):
         super().__init__()
-        self.inputs['in'] = InputSocket(self, 'in', SocketType.UNDEFINED)
-        self.outputs['out'] = OutputSocket(self, 'out', SocketType.UNDEFINED)
-    
+        self.display_name = "Reroute"
+        self.description = "Pass-through reroute node"
+        # input is required; output is modifiable so compute() can set it
+        self.inputs['in'] = InputSocket(self, 'in', socket_type, is_optional=False)
+        # mark output modifiable so compute can write into it
+        self.outputs['out'] = OutputSocket(self, 'out', socket_type, is_modifiable=True)
+
+    @property
+    def is_soft_computation(self):
+        # Reroute is a trivial passthrough, treat as soft so it will
+        # compute eagerly when asked for its output.
+        return True
+
     def compute(self):
-        inp = self.inputs['in']
-        out = self.outputs['out']
+        inp = self.inputs.get('in')
+        out = self.outputs.get('out')
+        if inp is None or out is None:
+            return
+        # If input is connected, forward its value; otherwise leave cache alone
         if inp.connection is not None:
-            out.set(inp.get())
+            try:
+                val = inp.get()
+                out.set(val)
+            except Exception:
+                # swallow errors to avoid breaking the scene update loop
+                pass
 
 class Graph:
     def __init__(self):
