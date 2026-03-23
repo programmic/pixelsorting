@@ -10,62 +10,7 @@ from .. import passes
 # Math nodes imported to keep nodes.py organized
 from .nodes_math import *
 
-class SourceImageNode(InputNode):
-    def __init__(self):
-        """
-        Initialize a "Source Image" node instance.
-        Sets up metadata and I/O for a node that provides a source image from an assets/images
-        directory. Attributes created:
-        - display_name (str): Human-readable name ("Source Image").
-        - category (str): Node category ("Base Nodes").
-        - description (str): Short description of the node's purpose.
-        - tooltips_in (dict): Mapping of input socket names to tooltip strings (empty for this node).
-        - tooltips_out (dict): Mapping of output socket names to tooltip strings (contains "image").
-        - index (int): Numeric index for the node (initialized to 0).
-        - inputs (dict): Input sockets mapping (empty for this source node).
-        - outputs (dict): Output sockets mapping; provides an "image" OutputSocket that emits a PIL image.
-        - _images (list[PIL.Image.Image]): Loaded in-memory images (initially empty).
-        - _image_files (list[str]): File paths for available images (initially empty).
-        Side effects:
-        - Calls self._load_images() to populate _images and _image_files from the assets/images
-            directory. Implementation of _load_images() determines error handling and file I/O behavior.
-        """
-        super().__init__()
-        self.display_name = "Source Image"
-        self.category = "Base Nodes"
-        self.description = "Provides a source image from the assets/images directory."
-        self.tooltips_in = {}
-        self.tooltips_out = {
-            "image": "Output image from the source node."
-        }
-
-        self.index = 0
-
-        self.inputs = {} # source node has no inputs
-        self.outputs["image"] = OutputSocket(
-            self, "image", SocketType.PIL_IMG
-        )
-
-        self._images: list[Image.Image] = []
-        self._image_files: list[str] = []
-        self._load_images()
-    
-    def _load_images(self):
-        self._images.clear()
-        self._image_files.clear()
-        for file in sorted(os.listdir("assets/images")):
-            if file.lower().endswith((".png", ".jpg", ".jpeg", ".bmp", ".gif")):
-                img = Image.open(os.path.join("assets/images", file)).convert("RGB")
-                self._images.append(img)
-                self._image_files.append(file)
-    
-    def compute(self):
-        if not self._images:
-            self.outputs["image"]._cache = None
-            return
-        
-        idx = max(0, min(self.index, len(self._images) - 1))
-        self.outputs["image"]._cache = self._images[idx]
+# Image Processing Nodes
 
 class BlurNode(ProcessorNode):
     def __init__(self):
@@ -301,6 +246,7 @@ class RescaleNode(ProcessorNode):
         self.display_name = "Rescale Image"
         self.category = "Base Nodes"
         self.description = "Rescales the input image to the specified resolution."
+        self.progress = 0
         self.tooltips_in = {
             "image": "Input image to be rescaled.",
             "resolution": "Target resolution in WIDTHxHEIGHT format (e.g., '800x600'), or target width."
@@ -338,7 +284,7 @@ class RescaleNode(ProcessorNode):
 
         try:
             print(f"RescaleNode: computing rescale to resolution={resolution}")
-            reduced = passes.reduce_size(img, resolution=resolution, upscale=bool(self.inputs["allow_upscale"].get()))
+            reduced = passes.reduce_size(img, resolution=resolution, upscale=bool(self.inputs["allow_upscale"].get()), progress=lambda pct, msg: setattr(self, 'progress', pct))
             try:
                 print(f"RescaleNode: result size={getattr(reduced, 'size', None)}")
             except Exception:
@@ -402,6 +348,21 @@ class ContrastMaskNode(ProcessorNode):
             print(f"ContrastMaskNode: Contrast mask failed ({e}), using blank mask.")
             traceback.print_exc()
             mask = Image.new("L", img.size, 0)
+
+        # If the generated mask contains no white pixels, fall back to a
+        # permissive all-white mask so downstream operations (e.g. sorting)
+        # still have something to operate on instead of being a no-op.
+        try:
+            extrema = mask.getextrema()
+            # extrema is (min, max) for 'L' images
+            if extrema is None or (isinstance(extrema, tuple) and extrema[1] == 0):
+                mask = Image.new("L", img.size, 255)
+        except Exception:
+            # If anything goes wrong checking extrema, prefer an all-white mask
+            try:
+                mask = Image.new("L", img.size, 255)
+            except Exception:
+                pass
 
         self.outputs["mask"]._cache = mask
 
@@ -551,16 +512,57 @@ class DifferenceNode(ProcessorNode):
 
         self.outputs["image"]._cache = diff
 
+class NormalNode(ProcessorNode):
+    def __init__(self):
+        super().__init__()
+        self.display_name = "Normal Map"
+        self.category = "Image Effects"
+        self.description = "Generates a normal map from the input image based on specified strength and method."
+        self.progress = 0
+        self.tooltips_in = {
+            "image": "Input image to generate normal map from.",
+            "strength": "Strength of the normal map effect.",
+            "method": "Method for generating the normal map (e.g., 'sobel', 'prewitt')."
+        }
+        self.tooltips_out = {
+            "image": "Output normal map image."
+        }
+        
+        self.inputs["image"] = InputSocket(
+            self, "image", SocketType.PIL_IMG
+        )
+        self.outputs["image"] = OutputSocket(
+            self, "image", SocketType.PIL_IMG
+        )
+    
+    def compute(self):
+        img = self.inputs["image"].get()
+        if img is None:
+            self.outputs["image"]._cache = None
+            return
+
+        self.progress = 0
+        try:
+            print(f"NormalNode: computing normal map")
+            normal_map = passes.calculate_image_normals(img, progress=lambda pct, msg: setattr(self, 'progress', pct))
+        except Exception as e:
+            print(f"NormalNode: Normal map computation failed ({e}), using original image.")
+            normal_map = img
+
+        self.outputs["image"]._cache = normal_map
+
 class DitherNode(ProcessorNode):
     def __init__(self):
         super().__init__()
         self.display_name = "Dither Image"
         self.category = "Image Effects"
         self.description = "Applies dithering to the input image."
+        self.progress = 0
         self.tooltips_in = {
             "image": "Input image to be dithered.",
-            "method": "Dithering method to use [ FLOYD_STEINBERG / ATKINSON ].",
+            "method": "Dithering method to use [ FLOYD_STEINBERG / atkinson / bayer_monochrome ].",
             "num_colors": "Number of colors to reduce the image to.",
+            "matrix_size": "Size of the Bayer matrix for dithering (must be a power of 2, e.g., 2, 4, 8). Only applicable if method is 'bayer_monochrome'.",
             "palette_selection": "Method for selecting the color palette [median_cut / most_represented / most_different].",
             "palette": "Optional custom color palette to use for dithering."
         }
@@ -578,6 +580,10 @@ class DitherNode(ProcessorNode):
 
         self.inputs["num_colors"] = InputSocket(
             self, "num_colors", SocketType.INT
+        )
+
+        self.inputs["matrix_size"] = InputSocket(
+            self, "matrix_size", SocketType.INT
         )
 
         self.inputs["palette_selection"] = InputSocket(
@@ -598,6 +604,7 @@ class DitherNode(ProcessorNode):
             self.outputs["image"]._cache = None
             return
 
+        self.progress = 0
         try:
             print(f"DitherNode: computing dithered image")
             method = self.inputs["method"].get()
@@ -609,7 +616,11 @@ class DitherNode(ProcessorNode):
                 num_colors = 16
             if palette_selection is None:
                 palette_selection = "median_cut"
-            dithered = passes.dither(img, num_colors=num_colors, method=method, palette_selection=palette_selection)
+            matrix_size = self.inputs["matrix_size"].get()
+            if matrix_size is None:
+                matrix_size = 4
+
+            dithered = passes.dither(img, num_colors=num_colors, method=method, palette_selection=palette_selection, matrix_size=matrix_size, progress=lambda pct, msg: setattr(self, 'progress', pct))
         except Exception as e:
             import traceback
             print(f"DitherNode: \033[31m[ERROR]\033[0m: Dithering failed ({e}), using original image.")
@@ -617,6 +628,56 @@ class DitherNode(ProcessorNode):
             dithered = img
 
         self.outputs["image"]._cache = dithered
+
+class QuantizeNode(ProcessorNode):
+    def __init__(self):
+        super().__init__()
+        self.display_name = "Quantize Image"
+        self.category = "Image Effects"
+        self.description = "Reduces the number of colors in the input image to create a quantized effect."
+        self.progress = 0
+        self.tooltips_in = {
+            "image": "Input image to be quantized.",
+            "num_colors": "Number of colors to reduce the image to."
+        }
+        # "method": "Quantization method to use [ KMEANS / MEDIAN_CUT / OCTREE ]."
+        self.tooltips_out = {
+            "image": "Output quantized image."
+        }
+        
+        self.inputs["image"] = InputSocket(
+            self, "image", SocketType.PIL_IMG
+        )
+
+        self.inputs["num_colors"] = InputSocket(
+            self, "num_colors", SocketType.INT
+        )
+
+        self.outputs["image"] = OutputSocket(
+            self, "image", SocketType.PIL_IMG
+        )
+    
+    def compute(self):
+        img = self.inputs["image"].get()
+        if img is None:
+            self.outputs["image"]._cache = None
+            return
+
+        self.progress = 0
+        try:
+            print(f"[QuantizeNode]: computing quantized image")
+            num_colors = self.inputs["num_colors"].get()
+            if num_colors is None:
+                num_colors = 8
+
+            quantized = passes.__quantize(img, num_colors=num_colors, progress=lambda pct, msg: setattr(self, 'progress', pct))
+        except Exception as e:
+            import traceback
+            print(f"[QuantizeNode]: Quantization failed ({e}), using original image.")
+            traceback.print_exc()
+            quantized = img
+
+        self.outputs["image"]._cache = quantized
 
 class OutlineNode(ProcessorNode):
     def __init__(self):
@@ -638,10 +699,6 @@ class OutlineNode(ProcessorNode):
         
         self.inputs["image"] = InputSocket(
             self, "image", SocketType.PIL_IMG
-        )
-
-        self.inputs["method"] = InputSocket(
-            self, "method", SocketType.STRING
         )
 
         self.inputs["threshold"] = InputSocket(
@@ -673,7 +730,7 @@ class OutlineNode(ProcessorNode):
             limUpper = 0.3
 
         try:
-            print(f"OutlineNode: computing outline image")
+            print(f"[OutlineNode]: computing outline image")
             method = self.inputs["method"].get()
             threshold = self.inputs["threshold"].get()
             if method is None:
@@ -689,11 +746,100 @@ class OutlineNode(ProcessorNode):
                 )
         except Exception as e:
             import traceback
-            print(f"OutlineNode: Outline computation failed ({e}), using original image.")
+            print(f"[OutlineNode]: Outline computation failed ({e}), using original image.")
             traceback.print_exc()
             outlined = img
 
         self.outputs["image"]._cache = outlined
+
+class SortPixelsNode(ProcessorNode):
+    def __init__(self):
+        super().__init__()
+        self.display_name = "Sort Pixels"
+        self.category = "Image Effects"
+        self.progress = 0
+        self.description = "Sorts the pixels of the input image based on a specified sorting method to create various artistic effects."
+        self.tooltips_in = {
+            "image": "Input image whose pixels will be sorted.",
+            "mode": "Sorting method to use ['LUM', 'hue', 'r', 'g', 'b'].",
+            "vSplitting": "If true, splits the image into vertical sections and sorts each section independently.",
+            "flipHorz": "If true, flips the image horizontally before sorting.",
+            "flipVert": "If true, flips the image vertically before sorting.",
+            "rotate": "Rotation to apply to the image before sorting (e.g., '0', '90', '180', '-90')."
+        }
+        self.tooltips_out = {
+            "image": "Output image with sorted pixels."
+        }
+
+        self.inputs["image"] = InputSocket(
+            self, "image", SocketType.PIL_IMG
+        )
+        self.inputs["mask"] = InputSocket(
+            self, "mask", SocketType.PIL_IMG_MONOCH, is_optional=True
+        )
+        self.inputs["mode"] = InputSocket(
+            self, "mode", SocketType.STRING
+        )
+        self.inputs["vSplitting"] = InputSocket(
+            self, "vSplitting", SocketType.BOOLEAN
+        )
+        self.inputs["flipHorz"] = InputSocket(
+            self, "flipHorz", SocketType.BOOLEAN
+        )
+        self.inputs["flipVert"] = InputSocket(
+            self, "flipVert", SocketType.BOOLEAN
+        )
+        self.inputs["rotate"] = InputSocket(
+            self, "rotate", SocketType.STRING
+        )
+
+        self.outputs["image"] = OutputSocket(
+            self, "image", SocketType.PIL_IMG
+        )
+
+
+    def compute(self):
+        try:
+            inp_img = self.inputs["image"].get()
+        except Exception as e:
+            print(f"[SortPixelsNode]: Error retrieving input image ({e}), aborting compute.")
+            return
+        print(f"[SortPixelsNode]: starting compute with image={inp_img}")
+        try: mask = self.inputs["mask"].get()
+        except Exception as e: mask = None
+
+        try: mode = self.inputs["mode"].get()
+        except Exception as e: mode = "LUM"
+
+        try: vSplitting = self.inputs["vSplitting"].get()
+        except Exception as e: vSplitting = False
+
+        try: flipHorz = self.inputs["flipHorz"].get()
+        except Exception as e: flipHorz = False
+
+        try: flipVert = self.inputs["flipVert"].get()
+        except Exception as e: flipVert = False
+
+        try: rotate = self.inputs["rotate"].get()
+        except Exception as e: rotate = "0"
+        
+        print(f"[SortPixelsNode]: computing sorted image with mode={mode} vSplitting={vSplitting} flipHorz={flipHorz} flipVert={flipVert} rotate={rotate}")
+        try: img = passes.wrap_sort(
+            inp_img,
+            mask=mask,
+            mode=mode,
+            vSplitting=vSplitting,
+            flipHorz=flipHorz,
+            flipVert=flipVert,
+            rotate=rotate,
+            progress=lambda pct, msg: setattr(self, 'progress', pct)
+        )
+        except Exception as e: 
+            print(f"[SortPixelsNode]: Sorting failed ({e}), using original image.")
+            img = inp_img
+        self.outputs["image"]._cache = img
+
+# Input Nodes
 
 class ValueIntNode(InputNode):
     def __init__(self):
@@ -766,6 +912,78 @@ class ValueColorNode(InputNode):
     
     def compute(self):
         self.outputs["value"]._cache = self.value
+
+class ValuePaletteNode(InputNode):
+    def __init__(self):
+        super().__init__()
+        self.category = "Input Nodes"
+        self.display_name = "Color Palette Value"
+        self.outputs["palette"] = OutputSocket(
+            self, "palette", SocketType.LIST_COLORS, is_modifiable=True
+        )
+        self.value: list[tuple[int, int, int]] = [(255, 255, 255)]
+    
+    def compute(self):
+        self.outputs["palette"]._cache = self.value
+
+# Base Nodes
+
+class SourceImageNode(InputNode):
+    def __init__(self):
+        """
+        Initialize a "Source Image" node instance.
+        Sets up metadata and I/O for a node that provides a source image from an assets/images
+        directory. Attributes created:
+        - display_name (str): Human-readable name ("Source Image").
+        - category (str): Node category ("Base Nodes").
+        - description (str): Short description of the node's purpose.
+        - tooltips_in (dict): Mapping of input socket names to tooltip strings (empty for this node).
+        - tooltips_out (dict): Mapping of output socket names to tooltip strings (contains "image").
+        - index (int): Numeric index for the node (initialized to 0).
+        - inputs (dict): Input sockets mapping (empty for this source node).
+        - outputs (dict): Output sockets mapping; provides an "image" OutputSocket that emits a PIL image.
+        - _images (list[PIL.Image.Image]): Loaded in-memory images (initially empty).
+        - _image_files (list[str]): File paths for available images (initially empty).
+        Side effects:
+        - Calls self._load_images() to populate _images and _image_files from the assets/images
+            directory. Implementation of _load_images() determines error handling and file I/O behavior.
+        """
+        super().__init__()
+        self.display_name = "Source Image"
+        self.category = "Base Nodes"
+        self.description = "Provides a source image from the assets/images directory."
+        self.tooltips_in = {}
+        self.tooltips_out = {
+            "image": "Output image from the source node."
+        }
+
+        self.index = 0
+
+        self.inputs = {} # source node has no inputs
+        self.outputs["image"] = OutputSocket(
+            self, "image", SocketType.PIL_IMG
+        )
+
+        self._images: list[Image.Image] = []
+        self._image_files: list[str] = []
+        self._load_images()
+    
+    def _load_images(self):
+        self._images.clear()
+        self._image_files.clear()
+        for file in sorted(os.listdir("assets/images")):
+            if file.lower().endswith((".png", ".jpg", ".jpeg", ".bmp", ".gif")):
+                img = Image.open(os.path.join("assets/images", file)).convert("RGB")
+                self._images.append(img)
+                self._image_files.append(file)
+    
+    def compute(self):
+        if not self._images:
+            self.outputs["image"]._cache = None
+            return
+        
+        idx = max(0, min(self.index, len(self._images) - 1))
+        self.outputs["image"]._cache = self._images[idx]
 
 class GetImageDataNode(ProcessorNode):
     @property

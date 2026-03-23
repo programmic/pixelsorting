@@ -2,7 +2,7 @@
 """Image processing functions for pixel sorting and manipulation."""
 
 from __future__ import annotations
-from typing import List, Tuple, Optional, Union
+from typing import List, Tuple, Optional, Union, Callable
 import contextlib
 import math
 import os
@@ -22,6 +22,9 @@ from enum import Enum
 
 from . import converters
 from .timing import timing
+
+ProgressCallback = Callable[[int, str], None]
+
 
 def getImageData(img: Image.Image) -> dict:
     """Returns dictionary with image metadata.\nDictionary: width, height, mode, info, format"""
@@ -180,7 +183,7 @@ def generate_luminance_mask(img: Image.Image, mask: Image.Image = None) -> Image
             out.putpixel((x,y), (val, val, val))
     return out
 
-def get_coherent_image_chunks(img: Image.Image, rotate: bool = False) -> list[list[tuple[int, int]]]: #globalignore
+def get_coherent_image_chunks(img: Image.Image, rotate: bool = False, progress: Optional[callable] = None) -> list[list[tuple[int, int]]]: #globalignore
     img = img.convert("RGB")
     if rotate: img = img.rotate(90, expand=True)
     width, height = img.size
@@ -193,7 +196,12 @@ def get_coherent_image_chunks(img: Image.Image, rotate: bool = False) -> list[li
             if 0 <= nx < width and 0 <= ny < height:
                 yield nx, ny
 
-    for x in tqdm(range(width), desc="Finding coherent chunks"):
+    if progress: 
+        iterator = range(width)
+    else:
+        iterator = tqdm(range(width), desc="Finding coherent chunks")
+
+    for x in iterator:
         for y in range(height):
             if not visited[x][y] and img.getpixel((x, y)) == (255, 255, 255):
                 stack = [(x, y)]
@@ -208,6 +216,12 @@ def get_coherent_image_chunks(img: Image.Image, rotate: bool = False) -> list[li
                             stack.append((nx, ny))
                 if chunk:
                     chunks.append(chunk)
+            try:
+                if progress:
+                    pct = int((x / width) * 45)
+                    progress(pct, f"Finding coherent chunks: {pct}%")
+            except Exception as e:
+                print("Progress callback failed during chunk finding. Continuing without progress updates.")
     return chunks
 
 def to_vertical_chunks(chunks: list[list[tuple[int, int]]]) -> list[list[tuple[int, int]]]: #globalignore
@@ -262,13 +276,14 @@ def visualize_chunks(img: Image.Image, chunks: list[list[tuple[int, int]]], rota
     return out #globalignore
 
 def wrap_sort(img: Image.Image,
-              mode: 'str',
-              vSplitting: bool,
-              flipHorz: bool,
-              flipVert: bool,
-              rotate: str,
-              progress: Optional[callable] = None
-              ) -> Image.Image:
+        mask: Optional[Image.Image],
+        mode: 'str',
+        vSplitting: bool,
+        flipHorz: bool,
+        flipVert: bool,
+        rotate: str,
+        progress: Optional[callable] = None
+        ) -> Image.Image:
     """
     Wrap sort function that translates UI settings to backend sort parameters.
     
@@ -283,6 +298,7 @@ def wrap_sort(img: Image.Image,
     Returns:
         Processed PIL Image
     """
+    print(f"[PixelSorting] Starting sort with settings: mode={mode}, vSplitting={vSplitting}, flipHorz={flipHorz}, flipVert={flipVert}, rotate={rotate}")
     
     # Translate rotation string to boolean for sort function
     rotate_bool = rotate != "0"
@@ -290,19 +306,16 @@ def wrap_sort(img: Image.Image,
     # Translate flip flags to flip direction
     flip_dir = flipHorz or flipVert
     
-    # Create mask based on vSplitting if needed
-    mask = None
-    
     # Call the actual sort function with translated parameters, including vSplitting
     try:
         if progress:
-            progress({'percent': 0, 'message': 'Starting sort'})
+            progress({0,'Starting sort'})
     except Exception:
         pass
     out = sort(img, mode, vSplitting=vSplitting, flip_dir=flip_dir, rotate=rotate_bool, mask=mask, progress=progress)
     try:
         if progress:
-            progress({'percent': 100, 'message': 'Sort completed'})
+            progress({100, 'Sort completed'})
     except Exception:
         pass
     return out
@@ -322,11 +335,16 @@ def sort(img: Image.Image,
             mask = mask.convert('RGB')
         if mask.size != img.size:
             mask = mask.resize(img.size, Image.Resampling.LANCZOS)
-        chunks = get_coherent_image_chunks(mask, rotate)
+
     else:
         # Create a white mask for the whole image if no mask provided
         mask = Image.new("RGB", img.size, (255, 255, 255))
-        chunks = get_coherent_image_chunks(mask, rotate)
+
+        
+    try:
+        chunks = get_coherent_image_chunks(mask, rotate, progress=progress if progress else None)
+    except Exception as e:
+        print(f"Error occurred while finding coherent chunks: {e}")
     # If vertical splitting requested, break chunks into vertical runs
     if vSplitting:
         try:
@@ -341,8 +359,19 @@ def sort(img: Image.Image,
     if rotate:
         img = img.rotate(90, expand=True)
 
+    # If we rotated the image for processing, ensure the mask is rotated
+    # the same way so coordinates returned from chunk-finding align with
+    # the image when we later query `mask.getpixel(coord)` inside threads.
+    if rotate:
+        try:
+            mask = mask.rotate(90, expand=True)
+        except Exception:
+            pass
+
     out = img.copy()
     lock = threading.Lock()
+    if progress: progress(45, "Processing chunks")
+    print("[PixelSorting] Processing chunks...")
 
     img_pixels = {(x, y): img.getpixel((x, y)) for x in range(img.width) for y in range(img.height)}
 
@@ -382,6 +411,9 @@ def sort(img: Image.Image,
             for coord, pixel in zip(coords_to_sort, chunk_pixels):
                 out.putpixel(coord, pixel)
 
+    if progress: progress(50, "Dispatching Threads")
+    print("[PixelSorting] Dispatching threads...")
+
     threads = []
     for chunk in chunks:
         t = threading.Thread(target=process_chunk, args=(chunk,))
@@ -393,10 +425,10 @@ def sort(img: Image.Image,
         t.join()
         try:
             if progress:
-                pct = int(((i + 1) / total_chunks) * 100)
-                progress({'percent': pct, 'message': f'Chunk {i+1}/{total_chunks}'})
+                pct = int(((i + 1) / total_chunks) * 50) + 50  # Scale to 15-100 range
+                progress(pct, f"Processing chunks: {pct}%")
         except Exception:
-            pass
+            print("Progress callback failed during chunk processing. Continuing without progress updates.")
 
     if rotate:
         out = out.rotate(-90, expand=True)
@@ -1625,14 +1657,18 @@ class DitherMethods(Enum):
     NONE = 0
     FLOYD_STEINBERG = 1
     ATKINSON = 2
+    BAYER = 3
+    BAYER_MONOCHROME = 4
 
 def dither(
     img: Image.Image,
     num_colors: int,
     method: DitherMethods | str,
+    matrix_size: int = 4,
     palette_selection: str = "median_cut",
     palette: Optional[list] = None,
     progress: Optional[callable] = None,
+    silent: bool = False
 ) -> Image.Image:
     """Apply dithering and reduce colors.
 
@@ -1659,6 +1695,10 @@ def dither(
             method = DitherMethods.FLOYD_STEINBERG
         elif method.lower() == "atkinson":
             method = DitherMethods.ATKINSON
+        elif method.lower() == "bayer":
+            method = DitherMethods.BAYER
+        elif method.lower() == "bayer_monochrome":
+            method = DitherMethods.BAYER_MONOCHROME
         else:
             raise ValueError(f"Unknown dithering method: {method}")
 
@@ -1673,6 +1713,15 @@ def dither(
     # Convert to PIL image (clipped) for potential fallback and for the
     # median-cut path below.
     result_img = Image.fromarray(img_uint8, 'RGB')
+
+    if not silent:
+        print(f"Applying dithering with method {method} and palette selection {palette_selection}...\nMatrix size: {matrix_size}x{matrix_size}\nNumber of colors: {num_colors}")
+
+    try:
+        if progress:
+            progress(0, f"Starting Dithering with method {method} and palette selection {palette_selection}")
+    except Exception:
+        pass
 
     # Helper: select the most represented colors from the image
     def _select_most_represented(pixels: np.ndarray, k: int) -> np.ndarray:
@@ -1716,6 +1765,12 @@ def dither(
 
     centers = None
     if palette is not None:
+        try:
+            if progress:
+                progress(5, f"Processing user palette with {len(palette)} colors")
+        except Exception:
+            pass
+
         # normalize palette into an (N,3) uint8 array
         def _hex_to_rgb(h: str) -> tuple:
             h = h.lstrip('#')
@@ -1739,15 +1794,39 @@ def dither(
     # If we are using median_cut, delegate to PIL (it supports dithering)
     if ps.lower() == "median_cut":
         try:
+            if progress:
+                progress(10, f"Applying median cut quantization with method {method} and palette selection {palette_selection}")
+        except Exception:
+            pass
+
+        try:
             dither_flag = Image.FLOYDSTEINBERG if method == DitherMethods.FLOYD_STEINBERG else Image.NONE
             qimg = result_img.quantize(colors=num_colors, method=Image.MEDIANCUT, dither=dither_flag)
+            
+            try:
+                if progress:
+                    progress(100, 'Dithering complete')
+            except Exception:
+                pass
+            
             return qimg.convert('RGB')
         except Exception:
+            try:
+                if progress:
+                    progress(100, 'Dithering failed, returning original')
+            except Exception:
+                pass
             return result_img
 
     # If centers still None, compute according to palette_selection
     img_uint8 = np.clip(img_np, 0, 255).astype(np.uint8)
     if centers is None:
+        try:
+            if progress:
+                progress(10, f"Selecting palette by {ps}")
+        except Exception:
+            pass
+
         if ps.lower() in ("most_represented", "represented", "frequent"):
             centers = _select_most_represented(img_uint8, num_colors)
         elif ps.lower() in ("most_different", "different", "diverse", "farthest"):
@@ -1759,17 +1838,127 @@ def dither(
     if centers is not None and centers.shape[0] > num_colors:
         centers = centers[:num_colors]
 
+    try:
+        if progress:
+            progress(20, 'Palette selected, starting error diffusion')
+    except Exception:
+        pass
+
     # Now perform dithering. If using an error-diffusion method, run the
     # palette-aware diffusion which maps pixels to the nearest center
     # during scanning and diffuses the resulting error.
     if method == DitherMethods.FLOYD_STEINBERG:
-        out_np = __dither_floyd_steinberg(img_np.copy(), num_colors, centers, progress=progress)
+        def _fs_progress(payload, *args, **kwargs):
+            try:
+                pct = None
+                msg = None
+                if isinstance(payload, dict):
+                    pct = payload.get('percent', payload.get('progress', None))
+                    msg = payload.get('message', None)
+                else:
+                    pct = payload
+                    if args:
+                        msg = args[0]
+                if pct is None:
+                    return
+                try:
+                    pct_val = int(pct)
+                except Exception:
+                    try:
+                        pct_val = int(float(pct))
+                    except Exception:
+                        return
+                outer_pct = max(0, min(100, int(pct_val * 0.8 + 20)))
+                outer_msg = f"{msg} (Floyd-Steinberg)" if msg else "(Floyd-Steinberg)"
+                try:
+                    progress(outer_pct, outer_msg)
+                except Exception:
+                    try:
+                        progress({'percent': outer_pct, 'message': outer_msg})
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        out_np = __dither_floyd_steinberg(img_np.copy(), num_colors, centers, progress=_fs_progress)
+        try:
+            if progress:
+                progress(100, 'Dithering complete')
+        except Exception:
+            pass
         return Image.fromarray(out_np, 'RGB')
     elif method == DitherMethods.ATKINSON:
-        out_np = __dither_atkinson(img_np.copy(), num_colors, centers, progress=progress)
-        return Image.fromarray(out_np, 'RGB')
+        def _atkinson_progress(payload, *args, **kwargs):
+            try:
+                pct = None
+                msg = None
+                if isinstance(payload, dict):
+                    pct = payload.get('percent', payload.get('progress', None))
+                    msg = payload.get('message', None)
+                else:
+                    pct = payload
+                    if args:
+                        msg = args[0]
+                if pct is None:
+                    return
+                try:
+                    pct_val = int(pct)
+                except Exception:
+                    try:
+                        pct_val = int(float(pct))
+                    except Exception:
+                        return
+                outer_pct = max(0, min(100, int(pct_val * 0.8 + 20)))
+                outer_msg = f"{msg} (Atkinson)" if msg else "(Atkinson)"
+                try:
+                    progress(outer_pct, outer_msg)
+                except Exception:
+                    try:
+                        progress({'percent': outer_pct, 'message': outer_msg})
+                    except Exception:
+                        pass
+            except Exception:
+                pass
 
+        out_np = __dither_atkinson(img_np.copy(), num_colors, centers, progress=_atkinson_progress)
+        try:
+            if progress:
+                progress(100, 'Dithering complete')
+        except Exception:
+            pass
+        return Image.fromarray(out_np, 'RGB')
+    
+    elif method == DitherMethods.BAYER_MONOCHROME:
+        # For monochrome, we can just threshold the luminance channel and ignore the palette
+        try:
+            if progress:
+                progress(50, 'Applying Bayer monochrome dithering')
+            
+            # calculate closest supported bayer matrix size (must be power of 2)
+            # Function to test if number is power of 2: (n & (n-1) == 0) and n != 0
+            if matrix_size & (matrix_size - 1) != 0 or matrix_size <= 0:
+                # If not a power of 2, find the closest one (default to 4 if invalid)
+                valid_sizes = [2, 4, 8, 16, 32, 64]
+                matrix_size = min(valid_sizes, key=lambda x: abs(x - matrix_size))
+                if not silent: print(f"Adjusted Bayer matrix size to {matrix_size}")
+
+            out = __dither_bayer_monochrome(img_np.copy(), dither_channel="lum", matrix_size=4, progress=progress, silent=silent)
+        except Exception as e:
+            print(f"Error occurred while applying Bayer monochrome dithering, returning original image: {e}")
+            out = img_np.copy()
+        try:
+            return Image.fromarray(out, 'RGB')
+        except Exception as e:
+            print(f"Error occurred while converting Bayer monochrome output to image, returning original image: {e}")
+            return result_img
+        
     # Fallback: simple nearest-center mapping (no error diffusion)
+    try:
+        if progress:
+            progress(50, 'Mapping pixels to palette')
+    except Exception:
+        pass
+
     h, w = img_uint8.shape[:2]
     pixels = img_uint8.reshape(-1, 3).astype(np.int16)
     centers_i = centers.astype(np.int16)
@@ -1778,6 +1967,12 @@ def dither(
     dists = np.sum(diffs ** 2, axis=2)
     labels = np.argmin(dists, axis=1)
     quant_pixels = centers_i[labels].astype(np.uint8).reshape((h, w, 3))
+
+    try:
+        if progress:
+            progress(100, 'Dithering complete')
+    except Exception:
+        pass
 
     return Image.fromarray(quant_pixels, 'RGB')
 
@@ -1846,7 +2041,12 @@ def __dither_floyd_steinberg(img_np: np.ndarray, num_colors: int, centers: Optio
 
     return np.clip(img, 0, 255).astype(np.uint8)
 
-def __dither_atkinson(img_np: np.ndarray, num_colors: int, centers: Optional[np.ndarray] = None, progress: Optional[callable] = None) -> np.ndarray:
+
+def __dither_atkinson(
+        img_np: np.ndarray,
+        num_colors: int, centers: Optional[np.ndarray] = None,
+        progress: Optional[callable] = None
+        ) -> np.ndarray:
     height, width, _ = img_np.shape
 
     if centers is None:
@@ -1871,13 +2071,10 @@ def __dither_atkinson(img_np: np.ndarray, num_colors: int, centers: Optional[np.
                 if y + 2 < height:
                     img_np[y + 2, x] += error * 1 / 8
 
-            # report progress per processed row
-            try:
+                # report progress per processed row
                 if progress:
                     pct = int(((y + 1) / height) * 100)
-                    progress({'percent': pct, 'message': f'Dithering row {y+1}/{height}'})
-            except Exception:
-                pass
+                    progress({'progress': pct, 'message': f'Dithering row {y+1}/{height}'})
 
         return np.clip(img_np, 0, 255).astype(np.uint8)
 
@@ -1912,13 +2109,62 @@ def __dither_atkinson(img_np: np.ndarray, num_colors: int, centers: Optional[np.
         try:
             if progress:
                 pct = int(((y + 1) / height) * 100)
-                progress({'percent': pct, 'message': f'Dithering row {y+1}/{height}'})
+                progress({'progress': pct, 'message': f'Dithering row {y+1}/{height}'})
         except Exception:
             pass
 
     return np.clip(img, 0, 255).astype(np.uint8)
 
-def quantize(
+def __dither_bayer_monochrome(
+        img_np: np.ndarray,
+        matrix_size: int = 4,
+        dither_channel: str = "lum",
+        progress: Optional[callable] = None,
+        silent: bool = False
+) -> np.ndarray:
+    def _compute_bayer_matrix(n: int) -> np.ndarray:
+        if n == 2:
+            return np.array([[0, 2], [3, 1]], dtype=np.float32)
+        else:
+            smaller = _compute_bayer_matrix(n // 2)
+            tiled = np.tile(smaller, (2, 2))
+            tiled[0::2, 0::2] = smaller * 4
+            tiled[0::2, 1::2] = smaller * 4 + 2
+            tiled[1::2, 0::2] = smaller * 4 + 3
+            tiled[1::2, 1::2] = smaller * 4 + 1
+            return tiled
+
+    height, width, _ = img_np.shape
+    bayer_matrix = _compute_bayer_matrix(matrix_size)
+    if not silent: print(f"Using Bayer matrix of size {matrix_size}x{matrix_size} for dithering")
+    threshold_map = (bayer_matrix + 0.5) / (matrix_size * matrix_size) * 255
+
+    if dither_channel == "lum":
+        lum = 0.299 * img_np[:, :, 0] + 0.587 * img_np[:, :, 1] + 0.114 * img_np[:, :, 2]
+        if not silent: print("Applying Bayer monochrome dithering based on luminance with {}x{} matrix".format(matrix_size, matrix_size))
+        for y in range(height):
+            for x in range(width):
+                threshold = threshold_map[y % matrix_size, x % matrix_size]
+                img_np[y, x] = [255, 255, 255] if lum[y, x] >= threshold else [0, 0, 0]
+                # report progress per row                if progress:
+                pct = int(((y + 1) / height) * 100)
+                if progress:
+                    progress(pct, f'Applying Bayer monochrome dithering row {y+1}/{height}')
+    else:
+        if not silent: print(f"Applying Bayer monochrome dithering based on {dither_channel} channel")
+        for y in range(height):
+            for x in range(width):
+                threshold = threshold_map[y % matrix_size, x % matrix_size]
+                for c in range(3):
+                    img_np[y, x, c] = 255 if img_np[y, x, c] >= threshold else 0
+                # report progress per row
+                if progress:
+                    pct = int(((y + 1) / height) * 100)
+                    progress(pct, f'Applying Bayer dithering row {y+1}/{height}')
+    return img_np.astype(np.uint8)
+
+
+def __quantize(
         img: Image.Image,
         num_colors: int = 16,
         progress: Optional[callable] = None,
@@ -1931,18 +2177,27 @@ def quantize(
     h, w, _ = arr.shape
     pixels = arr.reshape(-1, 3)
 
+    if progress:
+        progress(5, 'Starting quantization')
+
     # If there are already no more unique colors than requested, return copy
     uniq = np.unique(pixels.astype(np.uint8), axis=0)
     if uniq.shape[0] <= num_colors:
         return Image.fromarray(pixels.reshape((h, w, 3)).astype(np.uint8), "RGB")
 
+    if progress: progress(7, 'Initializing K-Means++ centers')
     # K-Means++ initialization
     rng = np.random.default_rng(0)
     n = pixels.shape[0]
     centers = np.empty((num_colors, 3), dtype=np.float32)
     first_idx = rng.integers(0, n)
     centers[0] = pixels[first_idx]
+
+    if progress: progress(10, f'Initializing palette: selected 1 color')
+
     for k in range(1, num_colors):
+        if progress:
+            progress(int((k / num_colors) * 10) + 10, f'Initializing palette: selected {k} colors')
         # distance from each pixel to nearest existing center
         dists = np.min(np.sum((pixels[:, None, :] - centers[:k][None, :, :]) ** 2, axis=2), axis=1)
         probs = dists / dists.sum()
@@ -1953,6 +2208,8 @@ def quantize(
     max_iter = 30
     tol = 1e-2
     for it in range(max_iter):
+        if progress:
+            progress(20 + int((it / max_iter) * 80), f'KMeans iter {it+1}/{max_iter}')
         # assign
         dists = np.sum((pixels[:, None, :] - centers[None, :, :]) ** 2, axis=2)  # shape (N, K)
         labels = np.argmin(dists, axis=1)
@@ -1972,8 +2229,7 @@ def quantize(
         # report KMeans progress
         try:
             if progress:
-                pct = int(((it + 1) / max_iter) * 100)
-                progress({'percent': pct, 'message': f'KMeans iter {it+1}/{max_iter}'})
+                progress(int(((it + 1) / max_iter) * 90 + 10), f'KMeans iter {it+1}/{max_iter}, shift={shift:.2f}')
         except Exception:
             pass
 
@@ -1984,14 +2240,15 @@ def quantize(
     dists = np.sum((pixels[:, None, :] - centers[None, :, :]) ** 2, axis=2)
     labels = np.argmin(dists, axis=1)
     quant_pixels = centers[labels].astype(np.uint8).reshape((h, w, 3))
-
+    if progress: progress(100, 'Quantization complete')
     return Image.fromarray(quant_pixels, "RGB")
 
 def reduce_size(
     img: Image.Image,
     resolution: str | tuple[str, str] | int = "1080x1920",
     fit_mode: str = "fit",
-    upscale: bool = False
+    upscale: bool = False,
+    progress: Optional[callable] = None,
 ) -> Image.Image:
     """
     Resize image to the given target resolution.
@@ -2001,6 +2258,7 @@ def reduce_size(
     - resolution: "WIDTHxHEIGHT" string or (width, height) tuple or width (height will be calculated to preserve aspect ratio)
     - fit_mode: "fit" (preserve aspect, fit inside), "crop" (fill and center-crop), or "stretch"
     - upscale: if False, do not enlarge images beyond their original size
+    - progress: optional callable to report resizing progress
 
     Returns:
     - resized PIL.Image
@@ -2009,6 +2267,8 @@ def reduce_size(
     target_h = None
 
     if isinstance(resolution, str):
+        if progress:
+            progress(0, f"Parsing resolution string '{resolution}'")
         res_l = resolution.lower()
         # Accept float strings for single number (e.g., '1598.0')
         try:
@@ -2049,13 +2309,15 @@ def reduce_size(
 
     else:
         raise ValueError("resolution must be a 'WIDTHxHEIGHT' string, a (width, height) tuple, or an integer width.")
-    
+    if progress:
+        progress(10, f"Target resolution parsed as {target_w}x{target_h if target_h is not None else 'auto'}")
     # 2. Calculate missing dimension if aspect ratio must be preserved (only W provided)
     if target_w is not None and target_h is None:
         # This covers:
         # a) Input was an integer (handled in elif resolution is int)
         # b) Input was a digit string (handled in if res_l.isdigit())
-        
+        if progress:
+            progress(20, "Calculating height to preserve aspect ratio")
         # Ensure we don't divide by zero if image width is zero (shouldn't happen but good practice)
         if img.width == 0:
             raise ValueError("Image width is zero, cannot calculate aspect ratio.")
@@ -2074,6 +2336,8 @@ def reduce_size(
 
     src_w, src_h = img.size
 
+    if progress:
+        progress(30, f"Source image size: {src_w}x{src_h}, Target size: {target_w}x{target_h}, Fit mode: {fit_mode}, Upscale: {upscale}")
     # If no upscaling allowed clamp target to source
     if not upscale:
         target_w = min(target_w, src_w)
@@ -2081,9 +2345,14 @@ def reduce_size(
 
     resample = Image.Resampling.LANCZOS
 
+    if progress:
+        progress(40, "Calculating resize parameters")
+
     fit_mode = fit_mode.lower()
     if fit_mode == "stretch":
-        return img.resize((target_w, target_h), resample)
+        stretch = img.resize((target_w, target_h), resample)
+        progress(100, "Resizing complete")
+        return stretch
 
     # compute scale factors
     scale_w = target_w / src_w
@@ -2093,7 +2362,12 @@ def reduce_size(
         scale = min(scale_w, scale_h)
         new_w = max(1, int(round(src_w * scale)))
         new_h = max(1, int(round(src_h * scale)))
-        return img.resize((new_w, new_h), resample)
+        if progress:
+            progress(50, f"Final image size: {new_w}x{new_h}")
+        ret =img.resize((new_w, new_h), resample)
+        if progress:
+            progress(100, "Resizing complete")
+        return ret
 
     if fit_mode == "crop":
         # scale to cover target, then center-crop
@@ -2102,11 +2376,17 @@ def reduce_size(
         new_h = max(1, int(round(src_h * scale)))
         resized = img.resize((new_w, new_h), resample)
 
+        if progress:
+            progress(50, f"Scaled image size for cropping: {new_w}x{new_h}")
+
         left = (new_w - target_w) // 2
         top = (new_h - target_h) // 2
         right = left + target_w
         bottom = top + target_h
-        return resized.crop((left, top, right, bottom))
+        cropped = resized.crop((left, top, right, bottom))
+        if progress:
+            progress(100, "Cropping complete")
+        return cropped
 
     raise ValueError("fit_mode must be one of: 'fit', 'crop', 'stretch'")
 
@@ -2530,3 +2810,65 @@ def noise(
         return Image.fromarray(noisy_np, "RGB")
     except Exception as e:
         raise RuntimeError(f"Failed to convert noisy array back to image: {e}") from e
+
+def calculate_image_normals(
+    img: Image.Image,
+    progress: Optional[ProgressCallback] = None
+) -> Image.Image:
+
+    img = img.convert("L")
+    img_np = np.array(img, dtype=np.float32) / 255.0
+
+    kx = np.array([[-1,0,1],[-2,0,2],[-1,0,1]], dtype=np.float32)
+    ky = np.array([[1,2,1],[0,0,0],[-1,-2,-1]], dtype=np.float32)
+    print(f"[NormalNode]: Created kernels for normal calculation")
+
+    def convolve2d(img_arr, kernel, offset=0, weight=50):
+        print(f"[NormalNode]: Starting convolution with offset={offset} and weight={weight}")
+        kh, kw = kernel.shape
+        pad_h, pad_w = kh // 2, kw // 2
+        padded = np.pad(img_arr, ((pad_h,pad_h),(pad_w,pad_w)), mode="reflect")
+
+        out = np.empty_like(img_arr)
+        rows = img_arr.shape[0]
+
+        for i in range(rows):
+            try:
+                if progress and i % max(1, rows // 25) == 0:
+                    pct = int(offset + (i / rows) * weight)
+                    progress(pct, f"Convolving row {i}/{rows}")
+            except Exception as e:
+                print(f"Progress callback error during convolution: {e}")
+
+            for j in range(img_arr.shape[1]):
+                window = padded[i:i+kh, j:j+kw]
+                out[i,j] = np.sum(window * kernel)
+
+        return out
+
+    gx = convolve2d(img_np, kx, offset=0, weight=50)
+    gy = convolve2d(img_np, ky, offset=50, weight=50)
+
+    print(f"[NormalNode]: Completed convolutions for normal calculation")
+
+    nz = np.ones_like(gx)
+    nx = -gx
+    ny = -gy
+
+    length = np.sqrt(nx**2 + ny**2 + nz**2) + 1e-8
+
+    nx /= length
+    ny /= length
+    nz /= length
+
+    normal_map = np.stack([
+        (nx+1)/2*255,
+        (ny+1)/2*255,
+        (nz+1)/2*255
+    ], axis=-1).astype(np.uint8)
+
+    if progress:
+        progress(100, "Finished")
+
+    print(f"[NormalNode]: Normal map calculation complete, returning image")
+    return Image.fromarray(normal_map, "RGB")

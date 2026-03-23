@@ -5,7 +5,7 @@ from PyQt5.QtWidgets import (
     QGraphicsRectItem, QGraphicsTextItem, QGraphicsProxyWidget,
     QPushButton, QSpinBox, QDoubleSpinBox, QLineEdit, QCheckBox,
     QMainWindow, QLabel, QApplication, QGraphicsItem, QGraphicsPixmapItem, QComboBox, QGraphicsProxyWidget,
-    QWidget, QDialog, QVBoxLayout, QScrollArea
+    QWidget, QDialog, QVBoxLayout, QScrollArea, QColorDialog
 )
 from PyQt5.QtCore import QRectF, Qt, QTimer, QThread, pyqtSignal, QSize, QObject, QEvent
 from PyQt5.QtGui import QPixmap, QImage, QColor, QBrush
@@ -388,7 +388,7 @@ class NodeItemInput(QGraphicsRectItem):
         self._title_label.setDefaultTextColor(QColor(180, 220, 180))
         self._title_label.setPos(10, 5)
         y_offset = self.MARGIN_TOP
-        from .nodes import ValueIntNode, ValueFloatNode, ValueStringNode, ValueBoolNode
+        from .nodes import ValueIntNode, ValueFloatNode, ValueStringNode, ValueBoolNode, ValueColorNode, ValuePaletteNode
         if isinstance(self.node, (ValueIntNode, ValueFloatNode, ValueStringNode, ValueBoolNode)):
             # For value nodes, create the output socket (usually named 'value')
             y = self.MARGIN_TOP
@@ -457,6 +457,149 @@ class NodeItemInput(QGraphicsRectItem):
                 proxy.setWidget(widget)
                 proxy.setPos(widget_margin, y_offset)
                 y_offset += widget.sizeHint().height() + 5
+        # Color value: show a color button that opens a color picker
+        elif isinstance(self.node, ValueColorNode):
+            widget_margin = 10
+            widget_width = self.WIDTH - 2 * widget_margin
+            col = getattr(self.node, 'value', (255, 255, 255))
+            btn = QPushButton()
+            r, g, b = (col[0], col[1], col[2]) if isinstance(col, (list, tuple)) and len(col) >= 3 else (255, 255, 255)
+            btn.setStyleSheet(f"background-color: rgb({r},{g},{b}); border: 1px solid #333;")
+            btn.setMaximumWidth(widget_width)
+            def on_pick_color():
+                try:
+                    initial = QColor(r, g, b)
+                    c = QColorDialog.getColor(initial)
+                    if c.isValid():
+                        new = (c.red(), c.green(), c.blue())
+                        try:
+                            self.node.value = new
+                        except Exception:
+                            pass
+                        try:
+                            # update output cache and mark dependents
+                            self.node.outputs.get('value').set(new)
+                        except Exception:
+                            pass
+                        try:
+                            self.node.user_modified()
+                        except Exception:
+                            pass
+                        btn.setStyleSheet(f"background-color: rgb({new[0]},{new[1]},{new[2]}); border: 1px solid #333;")
+                except Exception:
+                    pass
+            btn.clicked.connect(on_pick_color)
+            proxy = QGraphicsProxyWidget(self)
+            proxy.setWidget(btn)
+            proxy.setPos(widget_margin, y_offset)
+            y_offset += btn.sizeHint().height() + 5
+        # Palette editor: list of colors with edit and delete, plus add button
+        elif isinstance(self.node, ValuePaletteNode):
+            widget_margin = 6
+            widget_width = self.WIDTH - 2 * widget_margin
+            container = QWidget()
+            from PyQt5.QtWidgets import QHBoxLayout
+            vlay = QVBoxLayout(container)
+            vlay.setContentsMargins(0, 0, 0, 0)
+            vlay.setSpacing(4)
+
+            def rebuild():
+                # clear existing
+                while vlay.count():
+                    itm = vlay.takeAt(0)
+                    w = itm.widget()
+                    if w is not None:
+                        w.setParent(None)
+                vals = getattr(self.node, 'value', []) or []
+                for i, col in enumerate(vals):
+                    row = QWidget()
+                    hlay = QHBoxLayout(row)
+                    hlay.setContentsMargins(0, 0, 0, 0)
+                    hlay.setSpacing(6)
+                    r, g, b = (col[0], col[1], col[2]) if isinstance(col, (list, tuple)) and len(col) >= 3 else (255, 255, 255)
+                    sw = QLabel()
+                    sw.setFixedSize(36, 16)
+                    sw.setStyleSheet(f"background-color: rgb({r},{g},{b}); border: 1px solid #333;")
+                    edit_btn = QPushButton("✎")
+                    edit_btn.setFixedSize(22, 18)
+                    del_btn = QPushButton("✕")
+                    del_btn.setFixedSize(22, 18)
+
+                    def make_edit(idx):
+                        def on_edit():
+                            try:
+                                cur_col = getattr(self.node, 'value', [])[idx]
+                                init = QColor(cur_col[0], cur_col[1], cur_col[2])
+                            except Exception:
+                                init = QColor(255, 255, 255)
+                            c = QColorDialog.getColor(init)
+                            if c.isValid():
+                                try:
+                                    self.node.value[idx] = (c.red(), c.green(), c.blue())
+                                except Exception:
+                                    pass
+                                try:
+                                    self.node.outputs.get('palette').set(list(getattr(self.node, 'value', [])))
+                                except Exception:
+                                    pass
+                                try:
+                                    self.node.user_modified()
+                                except Exception:
+                                    pass
+                                rebuild()
+                        return on_edit
+
+                    def make_del(idx):
+                        def on_del():
+                            try:
+                                getattr(self.node, 'value', []).pop(idx)
+                            except Exception:
+                                pass
+                            try:
+                                self.node.outputs.get('palette').set(list(getattr(self.node, 'value', [])))
+                            except Exception:
+                                pass
+                            try:
+                                self.node.user_modified()
+                            except Exception:
+                                pass
+                            rebuild()
+                        return on_del
+
+                    edit_btn.clicked.connect(make_edit(i))
+                    del_btn.clicked.connect(make_del(i))
+                    hlay.addWidget(sw)
+                    hlay.addWidget(edit_btn)
+                    hlay.addWidget(del_btn)
+                    vlay.addWidget(row)
+
+                plus = QPushButton("+")
+                def on_add():
+                    try:
+                        getattr(self.node, 'value', []).append((255, 255, 255))
+                    except Exception:
+                        try:
+                            self.node.value = [(255,255,255)]
+                        except Exception:
+                            pass
+                    try:
+                        self.node.outputs.get('palette').set(list(getattr(self.node, 'value', [])))
+                    except Exception:
+                        pass
+                    try:
+                        self.node.user_modified()
+                    except Exception:
+                        pass
+                    rebuild()
+                plus.clicked.connect(on_add)
+                vlay.addWidget(plus)
+
+            rebuild()
+            proxy = QGraphicsProxyWidget(self)
+            proxy.setWidget(container)
+            proxy.setPos(widget_margin, y_offset)
+            proxy.setMaximumWidth(widget_width)
+            y_offset += container.sizeHint().height() + 5
         self.setRect(0, 0, self.WIDTH, max(self._height, y_offset))
 
     def update_dirty_visual(self):
@@ -531,6 +674,22 @@ class NodeItemProcessor(QGraphicsRectItem):
         self._title_label.setPos(10, 5)
         self._create_sockets()
         self.setRect(0, 0, self.WIDTH, self._height)
+        # Timer to refresh the UI while node reports progress
+        try:
+            self._progress_timer = QTimer()
+            self._progress_timer.timeout.connect(self._on_progress_timer)
+            self._progress_timer.start(200)
+        except Exception:
+            self._progress_timer = None
+
+    def _on_progress_timer(self):
+        try:
+            prog = getattr(self.node, 'progress', None)
+            # only update while a progress value exists
+            if prog is not None:
+                self.update()
+        except Exception:
+            pass
 
     def update_dirty_visual(self):
         is_dirty = any(sock._dirty for sock in self.node.outputs.values())
@@ -569,6 +728,40 @@ class NodeItemProcessor(QGraphicsRectItem):
         painter.setBrush(self.brush())
         painter.setPen(self.pen())
         painter.drawRect(rect)
+        # Draw small progress bar if node reports progress (0..100)
+        try:
+            prog = getattr(self.node, 'progress', None)
+            if prog is not None:
+                try:
+                    pct = float(prog)
+                except Exception:
+                    pct = 0.0
+                pct = max(0.0, min(100.0, pct))
+                bar_margin = 6
+                bar_height = 6
+                x = bar_margin
+                y = self._height - bar_height - bar_margin
+                w = self.WIDTH - (bar_margin * 2)
+                # background
+                bg_rect = QRectF(x, y, w, bar_height)
+                painter.setBrush(QColor(80, 80, 80))
+                painter.setPen(QColor(60, 60, 60))
+                painter.drawRect(bg_rect)
+                # filled portion
+                fill_w = int(w * (pct / 100.0))
+                if fill_w > 0:
+                    fill_rect = QRectF(x, y, fill_w, bar_height)
+                    painter.setBrush(QColor(100, 200, 100))
+                    painter.setPen(QColor(80, 160, 80))
+                    painter.drawRect(fill_rect)
+                # percentage text
+                try:
+                    painter.setPen(QColor(220, 220, 220))
+                    painter.drawText(QRectF(x, y - 14, w, 12), Qt.AlignCenter, f"{int(pct)}%")
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
 # NodeItemOutput: for OutputNode
 class NodeItemOutput(QGraphicsRectItem):

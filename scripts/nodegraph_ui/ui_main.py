@@ -16,6 +16,9 @@ from .nodes import SourceImageNode
 from .nodes import *
 import json
 import os
+import importlib
+import sys
+from PyQt5.QtCore import QFileSystemWatcher, QTimer
 from PyQt5.QtWidgets import QFileDialog
 
 # helper to convert non-JSON-serializable objects (like PIL Images) into
@@ -79,6 +82,127 @@ class MainWindow(QMainWindow):
 
         # scene + view
         self.scene = NodeScene(self.graph)
+
+        # Setup hot-reload watcher for nodes/passes during development
+        try:
+            self._hot_reload_paths = []
+            self._reload_watcher = QFileSystemWatcher(self)
+            # watch the node definitions and processing passes
+            repo_root = os.path.dirname(os.path.dirname(__file__))
+            nodes_path = os.path.join(repo_root, 'nodes.py')
+            passes_path = os.path.join(os.path.dirname(repo_root), 'passes.py')
+            for p in (nodes_path, passes_path):
+                if os.path.exists(p):
+                    try:
+                        self._reload_watcher.addPath(p)
+                        self._hot_reload_paths.append(p)
+                    except Exception:
+                        pass
+
+            # debounce timer
+            self._reload_debounce = QTimer(self)
+            self._reload_debounce.setSingleShot(True)
+            self._reload_debounce.setInterval(300)
+            # define handler functions on this instance (bound closures)
+            def _on_file_changed(path):
+                try:
+                    # QFileSystemWatcher may emit multiple rapid events; debounce
+                    # Re-add path if watcher removed it on some platforms
+                    try:
+                        if not self._reload_watcher.files() or path not in self._reload_watcher.files():
+                            try:
+                                if os.path.exists(path):
+                                    self._reload_watcher.addPath(path)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+                    # kick debounce
+                    try:
+                        self._reload_debounce.start()
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+
+            def _perform_hot_reload():
+                try:
+                    print('[hot-reload] Reloading modules: passes, nodegraph_ui.nodes')
+                    # reload passes first so nodes re-import will pick up correct references
+                    try:
+                        import scripts.passes as passes_mod
+                        importlib.reload(passes_mod)
+                    except Exception:
+                        try:
+                            import passes as passes_mod
+                            importlib.reload(passes_mod)
+                        except Exception:
+                            pass
+
+                    # reload nodes module
+                    try:
+                        from . import nodes as nodes_mod
+                        importlib.reload(nodes_mod)
+                    except Exception:
+                        try:
+                            import nodegraph_ui.nodes as nodes_mod
+                            importlib.reload(nodes_mod)
+                        except Exception:
+                            nodes_mod = None
+
+                    # update existing node instances in the graph to new classes
+                    try:
+                        if nodes_mod is not None:
+                            for node in list(self.graph.nodes):
+                                try:
+                                    cls_name = type(node).__name__
+                                    new_cls = getattr(nodes_mod, cls_name, None)
+                                    if isinstance(new_cls, type) and new_cls is not type(node):
+                                        try:
+                                            node.__class__ = new_cls
+                                            # allow node to adapt if it implements on_reload
+                                            try:
+                                                if hasattr(node, 'on_reload') and callable(node.on_reload):
+                                                    try:
+                                                        node.on_reload()
+                                                    except Exception:
+                                                        pass
+                                            except Exception:
+                                                pass
+                                        except Exception:
+                                            pass
+                                except Exception:
+                                    pass
+                            # refresh UI title labels for items
+                            try:
+                                for it in list(self.scene.items()):
+                                    try:
+                                        if hasattr(it, 'node') and it.node in self.graph.nodes:
+                                            try:
+                                                title = getattr(it.node, 'display_name', None) or type(it.node).__name__
+                                                if hasattr(it, '_title_label') and getattr(it, '_title_label') is not None:
+                                                    it._title_label.setPlainText(title)
+                                            except Exception:
+                                                pass
+                                    except Exception:
+                                        pass
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+                except Exception as e:
+                    try:
+                        print(f'[hot-reload] reload failed: {e}')
+                    except Exception:
+                        pass
+
+            # attach as bound attributes so other code can call them if needed
+            self._on_file_changed = _on_file_changed
+            self._perform_hot_reload = _perform_hot_reload
+
+            self._reload_watcher.fileChanged.connect(lambda p: self._on_file_changed(p))
+        except Exception:
+            self._reload_watcher = None
 
         # Custom view that enables middle-button panning by handling
         # middle-button press/move/release and adjusting scrollbars.
@@ -391,7 +515,7 @@ class MainWindow(QMainWindow):
                         event.ignore()
                         return
 
-                    # briefly flash a confirmation
+                    # briefly flash a confirmation for successful add
                     try:
                         hint = s.addText(f'Added: {cls_name}')
                         hint.setDefaultTextColor(Qt.white)
