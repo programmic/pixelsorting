@@ -6,8 +6,8 @@ from PyQt5.QtWidgets import QGraphicsView
 from PyQt5.QtWidgets import QApplication, QGraphicsView, QMainWindow
 from PyQt5.QtCore import Qt, QEvent, QVariantAnimation
 
-from PyQt5.QtWidgets import QWidget, QHBoxLayout, QListWidget, QListWidgetItem, QToolBar
-from PyQt5.QtCore import Qt, QEvent, QVariantAnimation
+from PyQt5.QtWidgets import QWidget, QHBoxLayout, QListWidget, QListWidgetItem, QToolBar, QLineEdit, QVBoxLayout
+from PyQt5.QtGui import QCursor
 
 from .ui_node_scene import NodeScene
 from .ui_node_item import NodeItemInput, NodeItemProcessor, NodeItemOutput
@@ -226,6 +226,129 @@ class MainWindow(QMainWindow):
 
         # Custom view that enables middle-button panning by handling
         # middle-button press/move/release and adjusting scrollbars.
+        # expose main window reference for nested classes
+        main_window_ref = self
+
+        # Quick-add popup for fast node insertion (Ctrl+Space)
+        class NodeQuickAdd(QWidget):
+            def __init__(self, parent, scene, view):
+                super().__init__(parent, Qt.Tool)
+                self.setWindowFlags(Qt.Tool | Qt.Popup)
+                self.scene = scene
+                self.view = view
+                self.setFixedWidth(360)
+                self.layout = QVBoxLayout(self)
+                self.edit = QLineEdit(self)
+                self.edit.setPlaceholderText('Type to search nodes...')
+                try:
+                    self.edit.setFocusPolicy(Qt.StrongFocus)
+                except Exception:
+                    pass
+                self.list = QListWidget(self)
+                self.layout.addWidget(self.edit)
+                self.layout.addWidget(self.list)
+                self.edit.textChanged.connect(self._on_text)
+                self.edit.returnPressed.connect(self._on_return)
+                self.list.itemActivated.connect(self._on_activate)
+                self._items = []
+
+            def populate(self):
+                # gather node class names from nodes module
+                try:
+                    from . import nodes as nodes_mod
+                except Exception:
+                    try:
+                        import nodes as nodes_mod
+                    except Exception:
+                        nodes_mod = None
+                names = []
+                if nodes_mod is not None:
+                    for name in dir(nodes_mod):
+                        try:
+                            obj = getattr(nodes_mod, name)
+                            if isinstance(obj, type):
+                                names.append(name)
+                        except Exception:
+                            pass
+                names.sort()
+                self._items = names
+                self._refresh_list()
+
+            def _refresh_list(self, filter_text=''):
+                self.list.clear()
+                ft = filter_text.lower() if filter_text else ''
+                for n in self._items:
+                    if not ft or ft in n.lower():
+                        self.list.addItem(QListWidgetItem(n))
+                if self.list.count() > 0:
+                    self.list.setCurrentRow(0)
+
+            def _on_text(self, txt):
+                self._refresh_list(txt)
+
+            def _on_return(self):
+                # triggered when user presses Enter in the text field
+                try:
+                    it = self.list.currentItem()
+                    if it is None and self.list.count() > 0:
+                        it = self.list.item(0)
+                    if it is not None:
+                        self._add_selected(it.text())
+                except Exception:
+                    # fallback: try to add first match
+                    try:
+                        if self.list.count() > 0:
+                            self._add_selected(self.list.item(0).text())
+                    except Exception:
+                        pass
+
+            def _on_activate(self, item):
+                self._add_selected(item.text())
+
+            def _add_selected(self, name):
+                try:
+                    pos = QCursor.pos()
+                    # map global cursor pos to scene coords via view
+                    scene_pos = self.view.mapToScene(self.view.mapFromGlobal(pos))
+                    self.scene.create_node_from_key(name, scene_pos)
+                except Exception:
+                    try:
+                        self.scene.create_node_from_key(name, self.scene.sceneRect().center())
+                    except Exception:
+                        pass
+                self.close()
+
+            def show_for_view(self, view):
+                self.view = view
+                self.populate()
+                # ensure the line edit actually receives focus after the popup is shown
+                try:
+                    def _focus():
+                        try:
+                            self.edit.setFocus()
+                            self.edit.selectAll()
+                            try:
+                                self.activateWindow()
+                            except Exception:
+                                pass
+                            try:
+                                self.raise_()
+                            except Exception:
+                                pass
+                        except Exception:
+                            pass
+                    QTimer.singleShot(0, _focus)
+                except Exception:
+                    try:
+                        self.edit.setFocus()
+                        self.edit.selectAll()
+                    except Exception:
+                        pass
+                # position near cursor but keep on-screen
+                pos = QCursor.pos()
+                self.move(pos.x() - 20, pos.y() - 10)
+                self.show()
+
         class PanGraphicsView(QGraphicsView):
             def __init__(self, *args, **kwargs):
                 super().__init__(*args, **kwargs)
@@ -252,6 +375,16 @@ class MainWindow(QMainWindow):
                         event.accept()
                         return
                     # Coordinate toggle via toolbar only; keypress disabled
+                    # Ctrl+Space -> quick-add node popup
+                    if event.key() == Qt.Key_Space and (event.modifiers() & Qt.ControlModifier):
+                        try:
+                            if not hasattr(main_window_ref, '_quick_add') or main_window_ref._quick_add is None:
+                                main_window_ref._quick_add = NodeQuickAdd(main_window_ref, self.scene(), self)
+                            main_window_ref._quick_add.show_for_view(self)
+                            event.accept()
+                            return
+                        except Exception:
+                            pass
                     # Delete: remove selected nodes from scene and backend graph
                     if event.key() == Qt.Key_Delete:
                         try:
