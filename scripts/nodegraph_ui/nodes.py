@@ -18,6 +18,7 @@ class BlurNode(ProcessorNode):
         self.display_name = "Blur Image"
         self.category = "Image Effects"
         self.description = "Applies a blur effect to the input image using the specified blur type and kernel size."
+        self.progress = 0
         self.tooltips_in = {
             "image": "Input image to be blurred.",
             "mask": "Optional mask to control where the blur is applied.",
@@ -27,6 +28,7 @@ class BlurNode(ProcessorNode):
         self.tooltips_out = {
             "image": "Output blurred image."
         }
+        self.silent = False  # set to True to suppress print statements for debugging
 
         self.inputs["image"] = InputSocket(
             self, "image", SocketType.PIL_IMG
@@ -44,12 +46,23 @@ class BlurNode(ProcessorNode):
         self.outputs["image"] = OutputSocket(
             self, "image", SocketType.PIL_IMG
         )
+        # caching to avoid unnecessary recompute when inputs unchanged
+        self._last_img_id = None
+        self._last_resolution = None
+        self._last_allow_upscale = None
+        # caching to avoid unnecessary recompute when inputs unchanged
+        self._last_img_id = None
+        self._last_resolution = None
+        self._last_allow_upscale = None
     
     def compute(self):
         img = self.inputs["image"].get()
         mask = self.inputs["mask"].get()
         blur_type = self.inputs["blur_type"].get()
         kernel = self.inputs["kernel"].get()
+        self.progress = 0
+
+        if not self.silent: print(f"[BlurNode]: compute called with blur_type={blur_type} kernel={kernel}")
 
         # Provide sensible defaults when optional control inputs are not connected
         if blur_type is None:
@@ -67,24 +80,31 @@ class BlurNode(ProcessorNode):
 
         blurred = None
         try:
-            blurred = passes.blur(img, blur_type, int(kernel))
+            if not self.silent: print(f"[BlurNode]: computing blur with type={blur_type} kernel={kernel}")
+            blurred = passes.blur(img, blur_type, int(kernel), progress=lambda pct, msg: setattr(self, 'progress', pct))
         except Exception as e:
             # Primary blur failed (possibly GPU/OpenCL). Try CPU fallbacks.
             try:
                 if blur_type == "Gaussian":
                     try:
-                        blurred = passes.blur_gaussian_fast(img, int(kernel))
+                        if not self.silent: print(f"[BlurNode]: Primary Gaussian blur failed ({e}), attempting fast CPU fallback.")
+                        blurred = passes.blur_gaussian_fast(img, int(kernel), progress=lambda pct, msg: setattr(self, 'progress', pct))
                     except Exception:
-                        blurred = passes.blur_gaussian(img, int(kernel))
+                        if not self.silent: print(f"[BlurNode]: Fast Gaussian blur failed, attempting standard CPU fallback.")
+                        blurred = passes.blur_gaussian(img, int(kernel), progress=lambda pct, msg: setattr(self, 'progress', pct))
                 elif blur_type == "Box":
                     try:
-                        blurred = passes.blur_box(img, int(kernel))
+                        if not self.silent: print(f"[BlurNode]: Attempting box blur.")
+                        blurred = passes.blur_box(img, int(kernel), progress=lambda pct, msg: setattr(self, 'progress', pct))
                     except Exception:
+                        if not self.silent: print(f"[BlurNode]: Box blur failed.")
                         blurred = img
                 else:
                     try:
-                        blurred = passes.blur_box(img, int(kernel))
+                        if not self.silent: print(f"[BlurNode]: Unknown blur type '{blur_type}', defaulting to box blur.")
+                        blurred = passes.blur_box(img, int(kernel), progress=lambda pct, msg: setattr(self, 'progress', pct))
                     except Exception:
+                        if not self.silent: print(f"[BlurNode]: Box blur failed.")
                         blurred = img
             except Exception:
                 blurred = img
@@ -103,6 +123,7 @@ class KuwaharaNode(ProcessorNode):
         self.display_name = "Kuwahara Filter"
         self.category = "Image Effects"
         self.description = "Applies a Kuwahara filter to the input image for artistic smoothing."
+        self.progress = 0
         self.tooltips_in = {
             "image": "Input image to be processed with the Kuwahara filter.",
             "radius": "Radius of the Kuwahara filter effect.",
@@ -155,7 +176,8 @@ class KuwaharaNode(ProcessorNode):
                 img, int(radius),
                 regions=int(regions),
                 isAnisotropic=bool(is_anisotropic),
-                stylePapari=bool(style_papari)
+                stylePapari=bool(style_papari),
+                progress=lambda pct, msg: setattr(self, 'progress', pct)
     )
         except Exception as e:
             import traceback
@@ -271,8 +293,11 @@ class RescaleNode(ProcessorNode):
             self, "image", SocketType.PIL_IMG
         )
     
+        self._last_img_id = None
+        self._last_resolution = None
+        self._last_allow_upscale = None
+
     def compute(self):
-        print(f"RescaleNode: starting compute with args: image={self.inputs['image'].get()}, resolution={self.inputs['resolution'].get()}, allow_upscale={self.inputs['allow_upscale'].get()}‼")
         img = self.inputs["image"].get()
         resolution = self.inputs["resolution"].get()
         if img is None:
@@ -282,9 +307,17 @@ class RescaleNode(ProcessorNode):
         if resolution is None:
             resolution = "1920x1080"
 
+        # if nothing changed since last compute, skip expensive resize
+        current_img_id = id(img)
+        current_allow_upscale = bool(self.inputs["allow_upscale"].get())
+        if (self._last_img_id == current_img_id and
+            self._last_resolution == resolution and
+            self._last_allow_upscale == current_allow_upscale):
+            return
+
         try:
             print(f"RescaleNode: computing rescale to resolution={resolution}")
-            reduced = passes.reduce_size(img, resolution=resolution, upscale=bool(self.inputs["allow_upscale"].get()), progress=lambda pct, msg: setattr(self, 'progress', pct))
+            reduced = passes.reduce_size(img, resolution=resolution, upscale=current_allow_upscale, progress=lambda pct, msg: setattr(self, 'progress', pct))
             try:
                 print(f"RescaleNode: result size={getattr(reduced, 'size', None)}")
             except Exception:
@@ -295,10 +328,19 @@ class RescaleNode(ProcessorNode):
             traceback.print_exc()
             reduced = img
 
+        # update cache and mark dependents only if output changed
+        old_cache = self.outputs["image"]._cache
         self.outputs["image"]._cache = reduced
-        # mark downstream nodes as dirty
-        for dep in self.dependents:
-            dep.mark_dirty()
+        self._last_img_id = current_img_id
+        self._last_resolution = resolution
+        self._last_allow_upscale = current_allow_upscale
+        try:
+            changed = old_cache is None or old_cache is not reduced and getattr(old_cache, 'size', None) != getattr(reduced, 'size', None)
+        except Exception:
+            changed = True
+        if changed:
+            for dep in self.dependents:
+                dep.mark_dirty()
 
 class ContrastMaskNode(ProcessorNode):
     # args: (img: Image.Image, limMin: int, limMax: int)
@@ -312,6 +354,7 @@ class ContrastMaskNode(ProcessorNode):
             "limMin": "Minimum contrast limit.",
             "limMax": "Maximum contrast limit."
         }
+        self.progress = 0
         self.inputs["image"] = InputSocket(
             self, "image", SocketType.PIL_IMG
         )
@@ -342,7 +385,15 @@ class ContrastMaskNode(ProcessorNode):
 
         try:
             print(f"ContrastMaskNode: computing contrast mask limMin={limMin} limMax={limMax}")
-            mask = passes.generate_contrast_mask(img, int(limMin), int(limMax))
+            # caching: avoid regenerating mask when inputs unchanged
+            if not hasattr(self, '_last_mask_inputs'):
+                self._last_mask_inputs = (None, None, None)
+            current_ids = (id(img), int(limMin) if limMin is not None else None, int(limMax) if limMax is not None else None)
+            if self._last_mask_inputs == current_ids and self.outputs["mask"]._cache is not None:
+                mask = self.outputs["mask"]._cache
+            else:
+                mask = passes.generate_contrast_mask(img, int(limMin), int(limMax), progress= lambda pct, msg: setattr(self, 'progress', pct))
+                self._last_mask_inputs = current_ids
         except Exception as e:
             import traceback
             print(f"ContrastMaskNode: Contrast mask failed ({e}), using blank mask.")
@@ -364,7 +415,16 @@ class ContrastMaskNode(ProcessorNode):
             except Exception:
                 pass
 
+        # update cache and mark dependents only if mask changed
+        old_mask = self.outputs["mask"]._cache
         self.outputs["mask"]._cache = mask
+        try:
+            changed = old_mask is None or (getattr(old_mask, 'tobytes', None) is not None and old_mask.tobytes() != mask.tobytes())
+        except Exception:
+            changed = True
+        if changed:
+            for dep in self.dependents:
+                dep.mark_dirty()
 
 class LuminanceMaskNode(ProcessorNode):
     def __init__(self):
@@ -472,7 +532,9 @@ class DifferenceNode(ProcessorNode):
     def __init__(self):
         super().__init__()
         self.display_name = "Difference"
+        self.category = "Image Effects"
         self.description = "Computes the difference between two input images."
+        self.progress = 0
         self.tooltips_in = {
             "imageA": "First input image for difference computation.",
             "imageB": "Second input image for difference computation."
@@ -503,14 +565,77 @@ class DifferenceNode(ProcessorNode):
 
         try:
             print(f"DifferenceNode: computing difference between two images")
-            diff = passes.difference(imgA, imgB)
+            diff = passes.difference(imgA, imgB, progress=lambda pct, msg: setattr(self, 'progress', pct))
         except Exception as e:
-            import traceback
             print(f"DifferenceNode: Difference computation failed ({e}), using blank image.")
-            traceback.print_exc()
             diff = Image.new("RGB", imgA.size, (0, 0, 0))
 
         self.outputs["image"]._cache = diff
+
+class MixNode(ProcessorNode):
+    def __init__(self):
+        super().__init__()
+        self.display_name = "Mix Images"
+        self.category = "Multi Image Processing"
+        self.description = "Blends two input images together based on a specified mix factor."
+        self.progress = 0
+        self.tooltips_in = {
+            "imageA": "First input image for mixing.",
+            "imageB": "Second input image for mixing.",
+            "mixMask": "Mask to control where the mix is applied.",
+        }
+        self.tooltips_out = {
+            "image": "Output image resulting from blending the two inputs."
+        }
+        
+        self.inputs["imageA"] = InputSocket(
+            self, "imageA", SocketType.PIL_IMG
+        )
+
+        self.inputs["imageB"] = InputSocket(
+            self, "imageB", SocketType.PIL_IMG
+        )
+
+        self.inputs["mixMask"] = InputSocket(
+            self, "mixMask", SocketType.PIL_IMG_MONOCH
+        )
+
+        self.outputs["image"] = OutputSocket(
+            self, "image", SocketType.PIL_IMG
+        )
+        # simple input-id cache to avoid recomputing when inputs unchanged
+        self._last_mix_inputs = (None, None, None)
+    
+    def compute(self):
+        imgA = self.inputs["imageA"].get()
+        imgB = self.inputs["imageB"].get()
+        mix_mask = self.inputs["mixMask"].get()
+        if imgA is None or imgB is None:
+            self.outputs["image"]._cache = None
+            return
+        if mix_mask is None:
+            mix_mask = Image.new("L", imgA.size, 128)  # default to 50% mix if no mask provided
+        # avoid recompute if inputs haven't changed (use id() as a lightweight fingerprint)
+        current_ids = (id(imgA), id(imgB), id(mix_mask))
+        if current_ids == self._last_mix_inputs and self.outputs["image"]._cache is not None:
+            return
+
+        try:
+            print(f"[MixNode]: computing mix of two images with mix mask")
+            mixed = passes.maskMerge(
+                imgA,
+                imgB,
+                mask=mix_mask,
+                progress=lambda pct, msg: setattr(self, 'progress', pct)
+                )
+        except Exception as e:
+            import traceback
+            print(f"[MixNode]: Mix computation failed ({e}), using first input image.")
+            traceback.print_exc()
+            mixed = imgA
+
+        self.outputs["image"]._cache = mixed
+        self._last_mix_inputs = current_ids
 
 class NormalNode(ProcessorNode):
     def __init__(self):
@@ -543,10 +668,10 @@ class NormalNode(ProcessorNode):
 
         self.progress = 0
         try:
-            print(f"NormalNode: computing normal map")
+            print(f"[NormalNode]: computing normal map")
             normal_map = passes.calculate_image_normals(img, progress=lambda pct, msg: setattr(self, 'progress', pct))
         except Exception as e:
-            print(f"NormalNode: Normal map computation failed ({e}), using original image.")
+            print(f"[NormalNode]: Normal map computation failed ({e}), using original image.")
             normal_map = img
 
         self.outputs["image"]._cache = normal_map
@@ -606,7 +731,7 @@ class DitherNode(ProcessorNode):
 
         self.progress = 0
         try:
-            print(f"DitherNode: computing dithered image")
+            print(f"[DitherNode]: computing dithered image")
             method = self.inputs["method"].get()
             num_colors = self.inputs["num_colors"].get()
             palette_selection = self.inputs["palette_selection"].get()
@@ -620,10 +745,17 @@ class DitherNode(ProcessorNode):
             if matrix_size is None:
                 matrix_size = 4
 
-            dithered = passes.dither(img, num_colors=num_colors, method=method, palette_selection=palette_selection, matrix_size=matrix_size, progress=lambda pct, msg: setattr(self, 'progress', pct))
+            dithered = passes.dither(
+                img,
+                num_colors=num_colors,
+                method=method,
+                palette_selection=palette_selection,
+                matrix_size=matrix_size,
+                progress=lambda pct, msg: setattr(self, 'progress', pct)
+            )
         except Exception as e:
             import traceback
-            print(f"DitherNode: \033[31m[ERROR]\033[0m: Dithering failed ({e}), using original image.")
+            print(f"[DitherNode]: \033[31m[ERROR]\033[0m: Dithering failed ({e}), using original image.")
             traceback.print_exc()
             dithered = img
 
@@ -770,6 +902,7 @@ class SortPixelsNode(ProcessorNode):
         self.tooltips_out = {
             "image": "Output image with sorted pixels."
         }
+        self.silent = False 
 
         self.inputs["image"] = InputSocket(
             self, "image", SocketType.PIL_IMG
@@ -806,24 +939,24 @@ class SortPixelsNode(ProcessorNode):
             return
         print(f"[SortPixelsNode]: starting compute with image={inp_img}")
         try: mask = self.inputs["mask"].get()
-        except Exception as e: mask = None
+        except Exception as e: mask = None ; [print(f"[SortPixelsNode]: Error retrieving mask input ({e}), proceeding without mask.") if not self.silent else None]
 
         try: mode = self.inputs["mode"].get()
-        except Exception as e: mode = "LUM"
+        except Exception as e: mode = "lum" ; [print(f"[SortPixelsNode]: Error retrieving mode input ({e}), defaulting to 'lum'.") if not self.silent else None]
 
         try: vSplitting = self.inputs["vSplitting"].get()
-        except Exception as e: vSplitting = False
+        except Exception as e: vSplitting = True ; [print(f"[SortPixelsNode]: Error retrieving vSplitting input ({e}), defaulting to True.") if not self.silent else None]
 
         try: flipHorz = self.inputs["flipHorz"].get()
-        except Exception as e: flipHorz = False
+        except Exception as e: flipHorz = False ; [print(f"[SortPixelsNode]: Error retrieving flipHorz input ({e}), defaulting to False.") if not self.silent else None]
 
         try: flipVert = self.inputs["flipVert"].get()
-        except Exception as e: flipVert = False
+        except Exception as e: flipVert = False ; [print(f"[SortPixelsNode]: Error retrieving flipVert input ({e}), defaulting to False.") if not self.silent else None]
 
         try: rotate = self.inputs["rotate"].get()
-        except Exception as e: rotate = "0"
+        except Exception as e: rotate = "0" ; [print(f"[SortPixelsNode]: Error retrieving rotate input ({e}), defaulting to '0'.") if not self.silent else None]
         
-        print(f"[SortPixelsNode]: computing sorted image with mode={mode} vSplitting={vSplitting} flipHorz={flipHorz} flipVert={flipVert} rotate={rotate}")
+        if not self.silent: print(f"[SortPixelsNode]: computing sorted image with mode={mode} vSplitting={vSplitting} flipHorz={flipHorz} flipVert={flipVert} rotate={rotate}")
         try: img = passes.wrap_sort(
             inp_img,
             mask=mask,
@@ -832,7 +965,8 @@ class SortPixelsNode(ProcessorNode):
             flipHorz=flipHorz,
             flipVert=flipVert,
             rotate=rotate,
-            progress=lambda pct, msg: setattr(self, 'progress', pct)
+            progress=lambda pct, msg: setattr(self, 'progress', pct),
+            silent=self.silent
         )
         except Exception as e: 
             print(f"[SortPixelsNode]: Sorting failed ({e}), using original image.")

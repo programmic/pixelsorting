@@ -1,6 +1,7 @@
 # scripts/nodegraph_ui/ui_main.py
 
 import sys
+from PyQt5 import QtCore
 from PyQt5.QtWidgets import QGraphicsView
 from PyQt5.QtWidgets import QApplication, QGraphicsView, QMainWindow
 from PyQt5.QtCore import Qt, QEvent, QVariantAnimation
@@ -10,6 +11,7 @@ from PyQt5.QtCore import Qt, QEvent, QVariantAnimation
 
 from .ui_node_scene import NodeScene
 from .ui_node_item import NodeItemInput, NodeItemProcessor, NodeItemOutput
+from .ui_connection_item import ConnectionItem
 
 from .classes import Graph, SocketType, Node, InputSocket, OutputSocket
 from .nodes import SourceImageNode
@@ -20,6 +22,24 @@ import importlib
 import sys
 from PyQt5.QtCore import QFileSystemWatcher, QTimer
 from PyQt5.QtWidgets import QFileDialog
+
+# Suppress noisy Win32 activation messages from Qt that are harmless
+# (e.g. "No Qt Window found for event ... WM_ACTIVATEAPP"). Install
+# a custom message handler before creating the QApplication so these
+# warnings don't spam the console.
+def _qt_msg_handler(msg_type, context, message):
+    try:
+        msg = message if isinstance(message, str) else str(message)
+        if 'No Qt Window found for event' in msg and 'WM_ACTIVATEAPP' in msg:
+            return
+    except Exception:
+        pass
+    try:
+        sys.__stderr__.write(str(message) + "\n")
+    except Exception:
+        pass
+
+QtCore.qInstallMessageHandler(_qt_msg_handler)
 
 # helper to convert non-JSON-serializable objects (like PIL Images) into
 # lightweight JSON-friendly representations when saving the graph.
@@ -893,6 +913,35 @@ class MainWindow(QMainWindow):
                                 self.graph.connect(out_sock, in_sock)
                             except Exception:
                                 pass
+                            else:
+                                # create visual ConnectionItem linking the socket UI items
+                                try:
+                                    start_ui = None
+                                    end_ui = None
+                                    for it in list(self.scene.items()):
+                                        try:
+                                            from .ui_socket_item import SocketItem
+                                            if isinstance(it, SocketItem):
+                                                try:
+                                                    if getattr(it, 'socket', None) is out_sock:
+                                                        start_ui = it
+                                                    if getattr(it, 'socket', None) is in_sock:
+                                                        end_ui = it
+                                                    if start_ui is not None and end_ui is not None:
+                                                        break
+                                                except Exception:
+                                                    pass
+                                        except Exception:
+                                            pass
+                                    if start_ui is not None and end_ui is not None:
+                                        try:
+                                            conn_item = ConnectionItem(start_ui)
+                                            conn_item.set_end_socket(end_ui)
+                                            self.scene.addItem(conn_item)
+                                        except Exception:
+                                            pass
+                                except Exception:
+                                    pass
                         except Exception:
                             pass
                 except Exception:

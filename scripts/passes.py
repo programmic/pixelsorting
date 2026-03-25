@@ -141,13 +141,24 @@ def scale_image(img: Image.Image, copyImage: Image.Image, downscale: float = 0) 
     
     return out
 
-def generate_contrast_mask(img: Image.Image, limMin: int, limMax: int) -> Image.Image:
+def generate_contrast_mask(
+        img: Image.Image,
+        limMin: int,
+        limMax: int,
+        progress: Optional[callable] = None
+        ) -> Image.Image:
     out: Image.Image = Image.new("L", img.size)
     lowest = math.inf
     highest = -math.inf
     width, height = img.size
-    for x in tqdm(range(width), desc="Processing contrast mask"):
+
+    iterator = range(width) if progress else tqdm(range(width), desc="Processing contrast mask")
+
+    for x in iterator:
         for y in range(height):
+            if progress:
+                pct = int((x / width) * 100)
+                progress(pct, f"Processing contrast mask: {pct}%")
             val = math.floor(converters.get_luminance(img.getpixel((x, y))))
             
             if val < lowest:
@@ -158,6 +169,7 @@ def generate_contrast_mask(img: Image.Image, limMin: int, limMax: int) -> Image.
                 out.putpixel((x, y), 255)
             else:
                 out.putpixel((x, y), 0)
+    if progress: progress(100, "Contrast mask processing complete")
     return out
 
 def generate_luminance_mask(img: Image.Image, mask: Image.Image = None) -> Image.Image:
@@ -276,13 +288,14 @@ def visualize_chunks(img: Image.Image, chunks: list[list[tuple[int, int]]], rota
     return out #globalignore
 
 def wrap_sort(img: Image.Image,
-        mask: Optional[Image.Image],
         mode: 'str',
         vSplitting: bool,
         flipHorz: bool,
         flipVert: bool,
         rotate: str,
-        progress: Optional[callable] = None
+        mask: Optional[Image.Image] = None,
+        progress: Optional[callable] = None,
+        silent: bool = False
         ) -> Image.Image:
     """
     Wrap sort function that translates UI settings to backend sort parameters.
@@ -298,7 +311,41 @@ def wrap_sort(img: Image.Image,
     Returns:
         Processed PIL Image
     """
-    print(f"[PixelSorting] Starting sort with settings: mode={mode}, vSplitting={vSplitting}, flipHorz={flipHorz}, flipVert={flipVert}, rotate={rotate}")
+    if progress:
+        progress(1, "Processing settings and preparing for sort")
+    if not silent: print("[PixelSorting] Processing settings and preparing for sort...")
+    # Accept uppercase mode strings from UI and normalize
+    if isinstance(mode, str):
+        mode = mode.lower()
+
+    if mode not in ["lum", "hue", "r", "g", "b"] or mode is None:
+        if not silent: print(f"[PixelSorting] Invalid mode '{mode}' provided, defaulting to 'lum'.")
+        mode = "lum"
+    
+    # Default to vertical splitting when unspecified — preserves row/column structure
+    if vSplitting not in [True, False] or vSplitting is None:
+        if not silent: print(f"[PixelSorting] Invalid vSplitting value '{vSplitting}' provided, defaulting to True.")
+        vSplitting = True
+    
+    if flipHorz not in [True, False] or flipHorz is None:
+        if not silent: print(f"[PixelSorting] Invalid flipHorz value '{flipHorz}' provided, defaulting to False.")
+        flipHorz = False
+
+    if flipVert not in [True, False] or flipVert is None:
+        if not silent: print(f"[PixelSorting] Invalid flipVert value '{flipVert}' provided, defaulting to False.")
+        flipVert = False
+    
+    if rotate not in ["0", "90", "180", "-90"] or rotate is None:
+        if not silent: print(f"[PixelSorting] Invalid rotate value '{rotate}' provided, defaulting to '0'.")
+        rotate = "0"
+
+    if mask and not isinstance(mask, Image.Image):
+        if not silent: print(f"[PixelSorting] Invalid mask provided, expected PIL Image. Ignoring mask.")
+        mask = None
+
+
+    if not silent:
+        print(f"[PixelSorting] Starting sort with settings: mode={mode}, vSplitting={vSplitting}, flipHorz={flipHorz}, flipVert={flipVert}, rotate={rotate}")
     
     # Translate rotation string to boolean for sort function
     rotate_bool = rotate != "0"
@@ -309,15 +356,22 @@ def wrap_sort(img: Image.Image,
     # Call the actual sort function with translated parameters, including vSplitting
     try:
         if progress:
-            progress({0,'Starting sort'})
-    except Exception:
-        pass
-    out = sort(img, mode, vSplitting=vSplitting, flip_dir=flip_dir, rotate=rotate_bool, mask=mask, progress=progress)
+            progress(5,'Starting sort')
+    except Exception as e:
+        if not silent:
+            print(f"[InternalSortFunction]: Progress callback failed at start of sort: {e}. Sort will proceed without progress updates.")
+    try:
+        out = sort(img, mode, vSplitting=vSplitting, flip_dir=flip_dir, rotate=rotate_bool, mask=mask, progress=progress)
+    except Exception as e:
+        if not silent:
+            print(f"[InternalSortFunction]: Error occurred during sorting: {e}. Returning original image.")
+        return img
     try:
         if progress:
-            progress({100, 'Sort completed'})
-    except Exception:
-        pass
+            progress(100, 'Sort completed')
+    except Exception as e:
+        if not silent:
+            print(f"[InternalSortFunction]: Progress callback failed at end of sort: {e}. Sort completed without progress updates.")
     return out
 
 def sort(img: Image.Image,
@@ -326,7 +380,8 @@ def sort(img: Image.Image,
          flip_dir: bool = False,
          rotate: bool = True,
          mask: Optional[Image.Image] = None,
-         progress: Optional[callable] = None
+         progress: Optional[callable] = None,
+         silent: bool = False
          ) -> Image.Image: #globalignore
     # Generate chunks from mask if provided, otherwise sort the whole image
     if mask:
@@ -344,15 +399,17 @@ def sort(img: Image.Image,
     try:
         chunks = get_coherent_image_chunks(mask, rotate, progress=progress if progress else None)
     except Exception as e:
-        print(f"Error occurred while finding coherent chunks: {e}")
+        if not silent:
+            print(f"[InternalSortFunction]: Error occurred while finding coherent chunks: {e}")
     # If vertical splitting requested, break chunks into vertical runs
     if vSplitting:
         try:
             v_chunks = to_vertical_chunks(chunks)
             chunks = split_connected_chunks(v_chunks)
-        except Exception:
+        except Exception as e:
             # In case of any issue with splitting, fall back to original chunks
-            pass
+            if not silent:
+                print(f"[InternalSortFunction]: Error occurred while splitting chunks: {e}")
     # Do not show the mask during processing (avoids popping GUI windows during
     # automated runs/tests). If you need to debug visually, enable explicitly.
     
@@ -365,15 +422,20 @@ def sort(img: Image.Image,
     if rotate:
         try:
             mask = mask.rotate(90, expand=True)
-        except Exception:
-            pass
+        except Exception as e:
+            if not silent:
+                print(f"Error occurred while rotating mask: {e}")
 
     out = img.copy()
     lock = threading.Lock()
     if progress: progress(45, "Processing chunks")
-    print("[PixelSorting] Processing chunks...")
+    if not silent:
+        print("[PixelSorting] Processing chunks...")
 
+    # Cache source image pixels to avoid repeated PIL getpixel calls in threads
     img_pixels = {(x, y): img.getpixel((x, y)) for x in range(img.width) for y in range(img.height)}
+    if not silent:
+        print(f"[PixelSorting][DEBUG] img.size={img.size}, total_cached_pixels={len(img_pixels)}")
 
     def process_chunk(chunk):
         """
@@ -385,9 +447,11 @@ def sort(img: Image.Image,
         # positions that were part of the sort region.
         coords_to_sort = [coord for coord in chunk if mask.getpixel(coord) == (255, 255, 255)]
         if not coords_to_sort:
+            if not silent:
+                print(f"[PixelSorting][DEBUG] Skipping chunk with 0 sortable coords (chunk_len={len(chunk)})")
             return
-        chunk_pixels = [img_pixels[coord] for coord in coords_to_sort]
-
+        chunk_pixels = [img_pixels.get(coord) for coord in coords_to_sort]
+        
         # Sort the chunk based on the selected mode
         if mode == "lum":
             # Use the project's luminance helper for perceptual luminance
@@ -412,7 +476,8 @@ def sort(img: Image.Image,
                 out.putpixel(coord, pixel)
 
     if progress: progress(50, "Dispatching Threads")
-    print("[PixelSorting] Dispatching threads...")
+    if not silent:
+        print("[PixelSorting] Dispatching threads...")
 
     threads = []
     for chunk in chunks:
@@ -427,8 +492,9 @@ def sort(img: Image.Image,
             if progress:
                 pct = int(((i + 1) / total_chunks) * 50) + 50  # Scale to 15-100 range
                 progress(pct, f"Processing chunks: {pct}%")
-        except Exception:
-            print("Progress callback failed during chunk processing. Continuing without progress updates.")
+        except Exception as e:
+            if not silent:
+                print(f"Progress callback failed during chunk processing: {e}")
 
     if rotate:
         out = out.rotate(-90, expand=True)
@@ -436,7 +502,15 @@ def sort(img: Image.Image,
     return out
 
 @timing
-def blur_box(img: Image.Image, kernel: int, num_threads: int = 64) -> Image.Image: #globalignore
+def blur_box(
+    img: Image.Image,
+    kernel: int,
+    num_threads: int = 64,
+    silent: bool = False,
+    progress: Optional[callable] = None
+    ) -> Image.Image: #globalignore
+    if progress: progress(0, "Preparing for blur")
+    orig_mode = img.mode
     img_rgba = _ensure_rgba(img)
     width, height = img.size
     original_pixels = img_rgba.load()
@@ -475,12 +549,17 @@ def blur_box(img: Image.Image, kernel: int, num_threads: int = 64) -> Image.Imag
         y_start = i * chunk_height
         y_end = (i + 1) * chunk_height if i < num_threads - 1 else height
         ranges.append((y_start, y_end))
+    
+    if progress: progress(10, "Starting threaded blur")
 
     # Threads starten
     with ThreadPoolExecutor(max_workers=num_threads) as executor:
         list(tqdm(executor.map(lambda args: process_rows(*args), ranges), total=len(ranges), desc="Applying threaded blur"))
-
-    return output
+    if progress: progress(100, "Blur complete")
+    try:
+        return output.convert(orig_mode)
+    except Exception:
+        return output
 
 @timing
 def blur_box_gpu(img: Image.Image, blur_kernel: int) -> Image.Image: #globalignore
@@ -524,10 +603,20 @@ def blur_box_gpu(img: Image.Image, blur_kernel: int) -> Image.Image: #globaligno
 
         # In Bild zurückverwandeln
         output_img = output_np.reshape((height, width, channels))
-        return Image.fromarray(output_img, 'RGB')
+        out = Image.fromarray(output_img, 'RGB')
+        try:
+            return out.convert(img.mode)
+        except Exception:
+            return out
 
 @timing
-def blur_gaussian(img: Image.Image, kernel: int, sigma: float = 1.0, num_threads: int = 64) -> Image.Image: #globalignore
+def blur_gaussian(
+    img: Image.Image,
+    kernel: int,
+    sigma: float = 1.0,
+    silent: bool = False,
+    progress: Optional[callable] = None
+    ) -> Image.Image: #globalignore
     """Optimized Gaussian blur using separable convolution with NumPy."""
     # Convert to numpy array for faster processing
     img_rgba = _ensure_rgba(img)
@@ -545,6 +634,7 @@ def blur_gaussian(img: Image.Image, kernel: int, sigma: float = 1.0, num_threads
     for c in range(channels):
         for y in range(height):
             for x in range(width):
+                if progress: progress(int((y / height) * 50), f"Applying horizontal blur: {int((y / height) * 50)}%")
                 x_min = max(x - kernel, 0)
                 x_max = min(x + kernel + 1, width)
                 kernel_start = max(kernel - x, 0)
@@ -559,6 +649,7 @@ def blur_gaussian(img: Image.Image, kernel: int, sigma: float = 1.0, num_threads
     for c in range(channels):
         for x in range(width):
             for y in range(height):
+                if progress: progress(int((y / height) * 50) + 50, f"Applying vertical blur: {int((y / height) * 50) + 50}%")
                 y_min = max(y - kernel, 0)
                 y_max = min(y + kernel + 1, height)
                 kernel_start = max(kernel - y, 0)
@@ -568,17 +659,31 @@ def blur_gaussian(img: Image.Image, kernel: int, sigma: float = 1.0, num_threads
                 kernel_slice = gaussian_1d[kernel_start:kernel_end]
                 output_array[y, x, c] = np.sum(window * kernel_slice)
     
-    # Convert back to PIL Image
+    # Convert back to PIL Image, preserve original mode when possible
     output_array = np.clip(output_array, 0, 255).astype(np.uint8)
-    return Image.fromarray(output_array, 'RGBA')
+    if progress: progress(100, "Gaussian blur complete")
+    out = Image.fromarray(output_array, 'RGBA')
+    try:
+        return out.convert(img.mode)
+    except Exception:
+        return out
 
 @timing
-def blur_gaussian_fast(img: Image.Image, kernel: int, sigma: float = 1.0) -> Image.Image: #globalignore
+def blur_gaussian_fast(
+    img: Image.Image,
+    kernel: int,
+    sigma: float = 1.0,
+    silent: bool = False, 
+    progress: Optional[callable] = None
+    ) -> Image.Image: #globalignore
+
     """Highly optimized Gaussian blur using vectorized NumPy operations."""
+    if progress: progress(0, "Preparing for Gaussian blur")
     img_rgba = _ensure_rgba(img)
     img_array = np.array(img_rgba, dtype=np.float32)
     
     # Generate 1D Gaussian kernel
+    if progress: progress(10, "Generating Gaussian kernel")
     kernel_size = 2 * kernel + 1
     x = np.arange(-kernel, kernel + 1)
     gaussian_1d = np.exp(-x**2 / (2 * sigma**2))
@@ -590,8 +695,10 @@ def blur_gaussian_fast(img: Image.Image, kernel: int, sigma: float = 1.0) -> Ima
     
     # Apply horizontal convolution
     temp = np.zeros_like(padded)
+    if progress: progress(20, "Applying horizontal convolution")
     for y in range(padded.shape[0]):
         for x in range(pad_width, padded.shape[1] - pad_width):
+            if progress: progress(int((y / padded.shape[0]) * 30) + 20, f"Applying horizontal convolution: {int((y / padded.shape[0]) * 30) + 20}%")
             window = padded[y, x - pad_width:x + pad_width + 1, :]
             temp[y, x, :] = np.sum(window * gaussian_1d[:, np.newaxis], axis=0)
     
@@ -599,13 +706,20 @@ def blur_gaussian_fast(img: Image.Image, kernel: int, sigma: float = 1.0) -> Ima
     output_padded = np.zeros_like(padded)
     for x in range(pad_width, padded.shape[1] - pad_width):
         for y in range(pad_width, padded.shape[0] - pad_width):
+            if progress: progress(int((y / padded.shape[0]) * 30) + 50, f"Applying vertical convolution: {int((y / padded.shape[0]) * 30) + 50}%")
             window = temp[y - pad_width:y + pad_width + 1, x, :]
             output_padded[y, x, :] = np.sum(window * gaussian_1d[:, np.newaxis], axis=0)
     
     # Remove padding and convert back
+    if progress: progress(90, "Finalizing output image")
     output_array = output_padded[pad_width:-pad_width, pad_width:-pad_width, :]
     output_array = np.clip(output_array, 0, 255).astype(np.uint8)
-    return Image.fromarray(output_array, 'RGBA')
+    if progress: progress(100, "Gaussian blur complete")
+    out = Image.fromarray(output_array, 'RGBA')
+    try:
+        return out.convert(img.mode)
+    except Exception:
+        return out
 
 def __gaussian_kernel_1d(kernel_size: int, sigma: float) -> np.ndarray: #globalignore
     """Erzeuge eine 1D-Gaussian-Kernel."""
@@ -822,14 +936,17 @@ def kuwahara_wrapper(
         regions: int = 8,
         isAnisotropic: bool = False,
         stylePapari: bool = False,
-        progress: Optional[callable] = None
+        progress: Optional[callable] = None,
+        silent: bool = False
         ) -> Image.Image:
     """Wrapper for Kuwahara that reports simple start/finish progress."""
     try:
         if progress:
-            progress({'percent': 0, 'message': 'Starting Kuwahara'})
-    except Exception:
-        pass
+            progress(0, 'Starting Kuwahara')
+    except Exception as e:
+        if not silent: 
+            print(f"Error occurred: {e}")
+
     print(f"Running Kuwahara Filter (Kernel: {kernel}, Regions: {regions}, Anisotropic: {isAnisotropic}, Papari Style: {stylePapari})")
     if isAnisotropic:
         if stylePapari:
@@ -840,12 +957,18 @@ def kuwahara_wrapper(
         out = kuwahara_gpu(img, kernel)
     try:
         if progress:
-            progress({'percent': 100, 'message': 'Kuwahara completed'})
-    except Exception:
-        pass
+            progress(100, 'Kuwahara completed')
+    except Exception as e:
+        if not silent:
+            print(f"Error occurred: {e}")
     return out
 
-def kuwahara(img: Image.Image, kernel: int, num_threads: int = None, progress: Optional[callable] = None) -> Image.Image: #globalignore
+def kuwahara(
+        img: Image.Image,
+        kernel: int, 
+        num_threads:int = None,
+        progress: Optional[callable] = None
+        ) -> Image.Image: #globalignore
     if num_threads is None:
         num_threads = os.cpu_count() or 4
 
@@ -877,7 +1000,7 @@ def kuwahara(img: Image.Image, kernel: int, num_threads: int = None, progress: O
             try:
                 if progress:
                     pct = int(((i + 1) / len(futures)) * 100)
-                    progress({'percent': pct, 'message': f'Kuwahara chunk {i+1}/{len(futures)}'})
+                    progress(pct, f'Kuwahara chunk {i+1}/{len(futures)}')
             except Exception:
                 pass
 
@@ -1239,7 +1362,7 @@ def mix_percent(a:Image.Image, b: Image.Image, p: int) -> Image.Image:
     if a.size != b.size:
         raise ValueError("Error: Images must be same size")
     if not ( 0 < p <= 100 ):
-        raise ValueError("Error Percent alue may not be outside 0 < p <= 100")
+        raise ValueError("Error: Percent value may not be outside 0 < p <= 100")
     
     out = Image.new("RGB", a.size)
     for x in tqdm(range(a.size[0]), desc="Mixing images"):
@@ -1259,13 +1382,23 @@ def mix_by_percent(img1: Image.Image, img2: Image.Image, mix_factor: float) -> I
     """Alias for mix_percent to match render pass name."""
     return mix_percent(img1, img2, int(mix_factor))
 
-def blur(img: Image.Image, blur_type: str, blur_kernel: int) -> Image.Image: #globalignore
+def blur(img: Image.Image, blur_type: str, blur_kernel: int, progress: Optional[callable] = None) -> Image.Image: #globalignore
     """Alias for blur functions to match render pass name."""
-    if      blur_type == "Box"       : return blur_box_gpu(  img, kernel=int(blur_kernel))
-    elif    blur_type == "Gaussian"  : return blur_gaussian( img, kernel=int(blur_kernel))
-    else                            : return blur_box_gpu(  img, kernel=int(blur_kernel))
+    bt = (str(blur_type) if blur_type is not None else '').strip().lower()
+    if bt == 'box':
+        return blur_box_gpu(img, int(blur_kernel))
+    elif bt == 'gaussian' or bt == 'gauss':
+        return blur_gaussian(img, kernel=int(blur_kernel), progress=progress)
+    else:
+        return blur_box_gpu(img, int(blur_kernel))
 
-def invert(img: Image.Image, invert_type: str, impact_factor: float = 1.0) -> Image.Image:
+def invert(
+        img: Image.Image,
+        invert_type: str = "RGB",
+        impact_factor: float = 1.0,
+        silent: bool = True,
+        progress: Optional[callable] = None
+        ) -> Image.Image:
     """
     Inverts image colors based on specified type and impact factor.
     
@@ -1273,7 +1406,9 @@ def invert(img: Image.Image, invert_type: str, impact_factor: float = 1.0) -> Im
         img: Input PIL Image
         invert_type: Type of inversion ("RGB", "R", "G", "B", "Luminance")
         impact_factor: Strength of inversion effect (0-100)
-    
+        silent: If True, suppress progress messages
+        progress: Optional callback for progress updates
+
     Returns:
         Inverted PIL Image
     """
@@ -1281,9 +1416,17 @@ def invert(img: Image.Image, invert_type: str, impact_factor: float = 1.0) -> Im
     width, height = img.size
     
     impact = impact_factor / 100.0
+
+    if silent:
+        iterator = tqdm(range(width), desc=f"Inverting {invert_type}")
+    else:
+        iterator = range(width)
     
-    for x in tqdm(range(width), desc=f"Inverting {invert_type}"):
+    for x in iterator:
         for y in range(height):
+            if progress:
+                pct = int((x / width) * 100)
+                progress(pct, f"Inverting {invert_type} - {pct}%")
             pixel = img.getpixel((x, y))
             
             # Grayscale (single int)
@@ -1296,15 +1439,15 @@ def invert(img: Image.Image, invert_type: str, impact_factor: float = 1.0) -> Im
             else:
                 r, g, b = pixel[:3]
                 
-                if invert_type == "RGB":
+                if invert_type.lower() == "rgb":
                     inv_r, inv_g, inv_b = 255 - r, 255 - g, 255 - b
-                elif invert_type == "R":
+                elif invert_type.lower() == "r":
                     inv_r, inv_g, inv_b = 255 - r, g, b
-                elif invert_type == "G":
+                elif invert_type.lower() == "g":
                     inv_r, inv_g, inv_b = r, 255 - g, b
-                elif invert_type == "B":
+                elif invert_type.lower() == "b":
                     inv_r, inv_g, inv_b = r, g, 255 - b
-                elif invert_type == "Lum":
+                elif invert_type.lower() == "lum":
                     lum = int(0.299 * r + 0.587 * g + 0.114 * b)
                     inv_lum = 255 - lum
                     diff = inv_lum - lum
@@ -1324,7 +1467,7 @@ def invert(img: Image.Image, invert_type: str, impact_factor: float = 1.0) -> Im
                     out.putpixel((x, y), (new_r, new_g, new_b, pixel[3]))
                 else:
                     out.putpixel((x, y), (new_r, new_g, new_b))
-    
+    if progress: progress(100, f"Inverting {invert_type} - Completed")
     return out
 
 def alpha_over(img1: Image.Image, img2: Image.Image) -> Image.Image:
@@ -1369,7 +1512,7 @@ def alpha_over(img1: Image.Image, img2: Image.Image) -> Image.Image:
     except Exception as e:
         raise RuntimeError(f"Alpha over operation failed: {str(e)}")
     
-def difference(img1: Image.Image, img2: Image.Image) -> Image.Image:
+def difference(img1: Image.Image, img2: Image.Image, progress: callable = None) -> Image.Image:
     if img1 is None or img2 is None:
         raise ValueError("Both images must be provided")
     
@@ -1379,13 +1522,20 @@ def difference(img1: Image.Image, img2: Image.Image) -> Image.Image:
     if img1_rgba.size != img2_rgba.size:
         print(f"Image size mismatch: {img1_rgba.size} vs {img2_rgba.size}. Resizing second image.")
         img2_rgba = img2_rgba.resize(img1_rgba.size, Image.Resampling.LANCZOS)
+
+    if progress: progress(25, "Ensuring images are RGBA and compatible")
     
     arr1 = np.array(img1_rgba, dtype=np.int16)
     arr2 = np.array(img2_rgba, dtype=np.int16)
 
+    if progress: progress(50, "Calculating pixel differences")
+
     diff_rgb = np.abs(arr1[:, :, :3] - arr2[:, :, :3]).astype(np.uint8)
     alpha = np.full((arr1.shape[0], arr1.shape[1], 1), 255, dtype=np.uint8)  # opaque
     diff = np.concatenate([diff_rgb, alpha], axis=2)
+
+    if progress:
+        progress(100, "Difference pass completed")
 
     return Image.fromarray(diff, mode="RGBA")
 
@@ -1444,6 +1594,74 @@ def multiply(img: Image.Image, factor: float, allowValueOverflow:bool = False) -
                 new_b = new_b % 255
             out.putpixel((x, y), (new_r, new_g, new_b))
     
+    return out
+
+def maskMerge(
+        img1: Image.Image,
+        img2: Image.Image,
+        mask: Image.Image,
+        silent: bool = True,
+        progress: Optional[callable] = None
+        ) -> Image.Image:
+    """Merges two images based on a grayscale mask.
+
+    Pixels with 100% brightness (255) in the mask are taken from `img1`,
+    pixels with 0% brightness (0) are taken from `img2`. Intermediate mask
+    values are linearly interpolated (lerped).
+
+    Args:
+        img1 (Image.Image): Source image 1 (used where mask is bright)
+        img2 (Image.Image): Source image 2 (used where mask is dark)
+        mask (Image.Image): Grayscale mask determining the blend ratio
+        silent (bool, optional): If True, suppress warning messages. Defaults to True.
+        progress (Optional[callable], optional): A callable to report progress. Defaults to None.
+
+    Returns:
+        Image.Image: The blended image
+    """
+
+    if img1 is None or img2 is None or mask is None:
+        print("[maskMerge] Warning: One or more inputs are None. Returning img1 as fallback.")
+        return img1 if img1 is not None else None
+    
+    if img1.size != img2.size or img1.size != mask.size:
+        print("[maskMerge] Warning: Image size mismatch. Resizing all inputs to match img1.")
+        target_size = img1.size
+        if img2.size != target_size:
+            img2 = img2.resize(target_size, Image.Resampling.LANCZOS)
+        if mask.size != target_size:
+            mask = mask.resize(target_size, Image.Resampling.LANCZOS)
+    
+    if progress: progress(0, "Starting mask merge")
+    if not silent:
+        iterator = tqdm(range(img1.size[0]), desc="Merging images with mask")
+    else:
+        iterator = range(img1.size[0])
+    
+    out = img1.copy()
+
+    if progress: progress(5, "Processing pixels for mask merge")
+
+    for x in iterator:
+        for y in range(img1.size[1]):
+            if progress:
+                pct = int((x / img1.size[0]) * 90 + 5)
+                progress(pct, f"Merging images with mask - {pct}%")
+            pixel1 = img1.getpixel((x, y))
+            pixel2 = img2.getpixel((x, y))
+            # mask is converted to 'L' (grayscale) earlier, so getpixel returns
+            # an int. Use it directly to compute the interpolation weight.
+            mv = mask.getpixel((x, y))
+            mask_value = (mv[0] / 255.0) if isinstance(mv, tuple) else (mv / 255.0)
+
+            new_r = int(pixel1[0] * mask_value + pixel2[0] * (1 - mask_value))
+            new_g = int(pixel1[1] * mask_value + pixel2[1] * (1 - mask_value))
+            new_b = int(pixel1[2] * mask_value + pixel2[2] * (1 - mask_value))
+
+            out.putpixel((x, y), (new_r, new_g, new_b))
+
+    if progress: progress(100, "Mask merge completed")
+
     return out
 
 def lerp(img1: Image.Image, img2: Image.Image,  mask: Image.Image) -> Image.Image:
@@ -1935,14 +2153,27 @@ def dither(
                 progress(50, 'Applying Bayer monochrome dithering')
             
             # calculate closest supported bayer matrix size (must be power of 2)
+            # Coerce incoming value to int safely (UI/frontends may pass floats or strings)
+            try:
+                matrix_size = int(matrix_size)
+            except Exception:
+                # fallback to default 4 on invalid input
+                matrix_size = 4
+
             # Function to test if number is power of 2: (n & (n-1) == 0) and n != 0
-            if matrix_size & (matrix_size - 1) != 0 or matrix_size <= 0:
+            if matrix_size <= 0 or (matrix_size & (matrix_size - 1)) != 0:
                 # If not a power of 2, find the closest one (default to 4 if invalid)
                 valid_sizes = [2, 4, 8, 16, 32, 64]
                 matrix_size = min(valid_sizes, key=lambda x: abs(x - matrix_size))
                 if not silent: print(f"Adjusted Bayer matrix size to {matrix_size}")
 
-            out = __dither_bayer_monochrome(img_np.copy(), dither_channel="lum", matrix_size=4, progress=progress, silent=silent)
+            out = __dither_bayer_monochrome(
+                img_np.copy(),
+                dither_channel="lum",
+                matrix_size=matrix_size,
+                progress=progress,
+                silent=silent
+                )
         except Exception as e:
             print(f"Error occurred while applying Bayer monochrome dithering, returning original image: {e}")
             out = img_np.copy()
@@ -2041,7 +2272,6 @@ def __dither_floyd_steinberg(img_np: np.ndarray, num_colors: int, centers: Optio
 
     return np.clip(img, 0, 255).astype(np.uint8)
 
-
 def __dither_atkinson(
         img_np: np.ndarray,
         num_colors: int, centers: Optional[np.ndarray] = None,
@@ -2122,6 +2352,7 @@ def __dither_bayer_monochrome(
         progress: Optional[callable] = None,
         silent: bool = False
 ) -> np.ndarray:
+    silent = False
     def _compute_bayer_matrix(n: int) -> np.ndarray:
         if n == 2:
             return np.array([[0, 2], [3, 1]], dtype=np.float32)
@@ -2162,7 +2393,6 @@ def __dither_bayer_monochrome(
                     pct = int(((y + 1) / height) * 100)
                     progress(pct, f'Applying Bayer dithering row {y+1}/{height}')
     return img_np.astype(np.uint8)
-
 
 def __quantize(
         img: Image.Image,
@@ -2675,106 +2905,6 @@ def noise(
     Returns:
         Image.Image: _description_
     """
-    def __gaussian_noise(img_arr: np.ndarray, amount: float) -> np.ndarray:
-        mean = 0.0
-        sigma = amount * 255.0
-        gauss = np.random.normal(mean, sigma, img_arr.shape).astype(np.float32)
-        noisy = img_arr + gauss
-        return np.clip(noisy, 0, 255).astype(np.uint8)
-    
-    def __salt_and_pepper_noise(img_arr: np.ndarray, amount: float) -> np.ndarray:
-        noisy = img_arr.copy()
-        num_salt = np.ceil(amount * img_arr.size * 0.5).astype(int)
-        num_pepper = np.ceil(amount * img_arr.size * 0.5).astype(int)
-
-        # Salt noise
-        coords = [np.random.randint(0, i - 1, num_salt) for i in img_arr.shape]
-        noisy[tuple(coords)] = 255
-
-        # Pepper noise
-        coords = [np.random.randint(0, i - 1, num_pepper) for i in img_arr.shape]
-        noisy[tuple(coords)] = 0
-
-        return noisy.astype(np.uint8)
-    
-    def __shot_noise(img_arr: np.ndarray, amount: float) -> np.ndarray:
-        noisy = img_arr.copy()
-        vals = 255 * np.random.poisson(img_arr / 255.0 * amount)
-        noisy = noisy + vals
-        return np.clip(noisy, 0, 255).astype(np.uint8)
-    
-    def __uniform_noise(img_arr: np.ndarray, amount: float) -> np.ndarray:
-        scale = amount * 255.0
-        uniform = np.random.uniform(-scale, scale, img_arr.shape).astype(np.float32)
-        noisy = img_arr + uniform
-        return np.clip(noisy, 0, 255).astype(np.uint8)
-    
-    def __fifty_percent_noise(img_arr: np.ndarray, amount: float) -> np.ndarray:
-        noisy = img_arr.copy()
-        prob = amount
-        random_matrix = np.random.rand(*img_arr.shape)
-        noisy[random_matrix < (prob / 2)] = 0
-        noisy[random_matrix > (1 - prob / 2)] = 255
-        return noisy.astype(np.uint8)
-
-    def __blue_noise(img_arr: np.ndarray, amount: float) -> np.ndarray:
-        scale = amount * 255.0
-        blue = np.random.normal(0, scale, img_arr.shape).astype(np.float32)
-        noisy = img_arr + blue
-        return np.clip(noisy, 0, 255).astype(np.uint8)
-    
-    def __perlin_noise(img_arr: np.ndarray, amount: float, size: float) -> np.ndarray:
-        # generate Perlin noise without external libraries
-        def f(t):
-            return 6*t**5 - 15*t**4 + 10*t**3
-        def gradient(h, x, y):
-            vectors = np.array([[0,1],[0,-1],[1,0],[-1,0]])
-            g = vectors[h%4]
-            return g[:, :, 0]*x + g[:, :, 1]*y
-        def perlin(x, y):
-            xi = x.astype(int)
-            yi = y.astype(int)
-            xf = x - xi
-            yf = y - yi
-            u = f(xf)
-            v = f(yf)
-
-            n00 = gradient(p[p[xi]+yi], xf, yf)
-            n01 = gradient(p[p[xi]+yi+1], xf, yf-1)
-            n10 = gradient(p[p[xi+1]+yi], xf-1, yf)
-            n11 = gradient(p[p[xi+1]+yi+1], xf-1, yf-1)
-
-            x1 = (1 - u) * n00 + u * n10
-            x2 = (1 - u) * n01 + u * n11
-            return (1 - v) * x1 + v * x2
-        lin_x = np.linspace(0, size, img_arr.shape[1], endpoint=False)
-        lin_y = np.linspace(0, size, img_arr.shape[0], endpoint=False)
-        x, y = np.meshgrid(lin_x, lin_y)
-        permutation = np.arange(256, dtype=int)
-        np.random.shuffle(permutation)
-        p = np.stack([permutation, permutation]).flatten()
-        noise = perlin(x, y)
-        noise = (noise - noise.min()) / (noise.max() - noise.min()) * 255.0
-        noisy = img_arr + (noise * amount).astype(np.float32)
-        return np.clip(noisy, 0, 255).astype(np.uint8)
-        
-    def __blue_noise(img_arr: np.ndarray, amount: float) -> np.ndarray:
-        scale = amount * 255.0
-        blue = np.random.normal(0, scale, img_arr.shape).astype(np.float32)
-        noisy = img_arr + blue
-        return np.clip(noisy, 0, 255).astype(np.uint8)
-    
-    def __pink_noise(img_arr: np.ndarray, amount: float) -> np.ndarray:
-        scale = amount * 255.0
-        pink = np.cumsum(np.random.normal(0, scale, img_arr.shape), axis=0)
-        noisy = img_arr + pink
-        return np.clip(noisy, 0, 255).astype(np.uint8)
-    
-    def __white_noise(img_arr: np.ndarray, amount: float) -> np.ndarray:
-        scale = amount * 255.0
-        white = np.random.normal(0, scale, img_arr.shape).astype(np.float32)
-        noisy = img_arr + white
-        return np.clip(noisy, 0, 255).astype(np.uint8)
     
     img = img.convert("RGB")
 
@@ -2784,28 +2914,30 @@ def noise(
         print(f"Failed to convert image to numpy array: {e}")
         raise Exception from e
 
+    from . import noise
+
     noise_type = noise_type.lower()
     if noise_type == "gaussian":
-        noisy_np = __gaussian_noise(img_np, amount)
+        noisy_np = noise.__gaussian_noise(img_np, amount)
     elif noise_type == "salt_pepper":
-        noisy_np = __salt_and_pepper_noise(img_np, amount)
+        noisy_np = noise.__salt_and_pepper_noise(img_np, amount)
     elif noise_type == "shot":
-        noisy_np = __shot_noise(img_np, amount)
+        noisy_np = noise.__shot_noise(img_np, amount)
     elif noise_type == "uniform":
-        noisy_np = __uniform_noise(img_np, amount)
+        noisy_np = noise.__uniform_noise(img_np, amount)
     elif noise_type in ["50_percent", "50percent", "50_per_cent", "50percent", "fifty_percent", "fiftypercent", "gray_noise", "graynoise"]:
-        noisy_np = __fifty_percent_noise(img_np, amount)
+        noisy_np = noise.__fifty_percent_noise(img_np, amount)
     elif noise_type == "perlin":
-        noisy_np = __perlin_noise(img_np, amount, size if size is not None else 1)
+        noisy_np = noise.__perlin_noise(img_np, amount, size if size is not None else 1)
     elif noise_type == "blue":
-        noisy_np = __blue_noise(img_np, amount)
+        noisy_np = noise.__blue_noise(img_np, amount)
     elif noise_type == "pink":
-        noisy_np = __pink_noise(img_np, amount)
+        noisy_np = noise.__pink_noise(img_np, amount)
     elif noise_type == "white":
-        noisy_np = __white_noise(img_np, amount)
+        noisy_np = noise.__white_noise(img_np, amount)
     else:
         print(f"Unknown noise type: {noise_type} - using gaussian noise instead.")
-        noisy_np = __gaussian_noise(img_np, amount)
+        noisy_np = noise.__gaussian_noise(img_np, amount)
     try:
         return Image.fromarray(noisy_np, "RGB")
     except Exception as e:

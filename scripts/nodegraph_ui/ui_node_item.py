@@ -13,6 +13,7 @@ from PIL.ImageQt import ImageQt
 from PyQt5.QtWidgets import QSizePolicy
 from PyQt5.QtCore import QPoint
 from PyQt5.QtGui import QTransform
+from .viewer_fullscreen import FullscreenViewer
 
 
 # ViewerDialog: standalone zoomable/pannable dark-mode image viewer
@@ -1131,10 +1132,19 @@ class NodeItemOutput(QGraphicsRectItem):
             except Exception:
                 full_pix = getattr(self, '_last_qpixmap', None)
 
-        # Build a standalone viewer dialog (centralized implementation)
+        # Build a standalone fullscreen viewer (replaces ViewerDialog)
         try:
-            dlg = ViewerDialog(full_pix)
-            dlg.exec_()
+            parent = QApplication.activeWindow() if QApplication is not None else None
+            dlg = FullscreenViewer(parent)
+            dlg.show_image(full_pix)
+            # show as floating half-screen window by default (press F11 for true fullscreen)
+            try:
+                dlg.exec_()
+            except Exception:
+                try:
+                    dlg.show()
+                except Exception:
+                    pass
         except Exception:
             # fallback: do nothing
             pass
@@ -1284,7 +1294,7 @@ class ComputeWorker(QThread):
             result = self.func()
             print("[ComputeWorker] Compute work finished.")
             self.finished_sig.emit({"success": True, "result": result, "exc": None})
-        except Exception:
-            print("[ComputeWorker] Compute work failed.")
+        except Exception as e:
+            print(f"\033[91m[ComputeWorker] Compute work failed:\n\033[97m{e}\033[0m")
             self.finished_sig.emit({"success": False, "result": None, "exc": None})
 

@@ -1,5 +1,6 @@
 from PIL import Image
-from passes import wrap_sort
+from .passes import wrap_sort
+
 
 # create a horizontal gradient image (left red -> right blue)
 W, H = 512, 384
@@ -11,11 +12,14 @@ for x in range(W):
         g = int(128 * (y / (H - 1)))
         img.putpixel((x, y), (r, g, b))
 
-# run wrap_sort with vSplitting True, no flips, no rotation, mode lum
-out = wrap_sort(img, mode='lum', vSplitting=True, flipHorz=False, flipVert=False, rotate='0')
+# instead of using the gradient, use random image from assets
+img = Image.open('assets/images/P1280210.JPG')
+
+# run wrap_sort with vSplitting True, no flips, no rotation, mode hue
+out = wrap_sort(img, mode='hue', vSplitting=True, flipHorz=False, flipVert=False, rotate='0')
 
 out.save('saved/debug_sort.png')
 print('Wrote saved/debug_sort.png')
-out2 = wrap_sort(img, mode='lum', vSplitting=False, flipHorz=False, flipVert=False, rotate='0')
+out2 = wrap_sort(img, mode='hue', vSplitting=False, flipHorz=False, flipVert=False, rotate='0')
 out2.save('saved/debug_sort_horiz.png')
 print('Wrote saved/debug_sort_horiz.png')
