@@ -1,5 +1,11 @@
 from PIL import Image
-from .passes import wrap_sort
+import os
+import sys
+
+if __package__ in (None, ""):
+    sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+from scripts.passes import wrap_sort
 
 
 # create a horizontal gradient image (left red -> right blue)

@@ -17,6 +17,9 @@ from PySide6.QtCore import Qt, QObject, Signal, QThread
 import superqt
 import os
 
+if __package__ in (None, ""):
+    sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
 class ImageDropLabel(QLabel):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -82,7 +85,7 @@ class PreviewWorker(QObject):
         self.high = contrastLimUpper
 
     def run(self):
-        from passes import contrastMask
+        from scripts.passes import contrastMask
         result = contrastMask(self.image, self.low, self.high)
         self.resultReady.emit(result)
         self.finished.emit()

@@ -9,7 +9,7 @@ def _import_passes_module():
         return passes_mod
     except Exception:
         try:
-            from ..scripts import passes as passes_mod
+            from .scripts import passes as passes_mod
             return passes_mod
         except Exception:
             raise

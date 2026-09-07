@@ -2,7 +2,7 @@
 fullscreen viewer with infinite-canvas panning (MMB) and scroll-to-zoom.
 
 Usage:
-    from .viewer_fullscreen import FullscreenViewer
+    from viewer_fullscreen import FullscreenViewer
     fv = FullscreenViewer(parent)
     fv.show_image(qpixmap_or_pil_image)
     fv.show_fullscreen()

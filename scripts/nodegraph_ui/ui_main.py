@@ -1,6 +1,13 @@
 # scripts/nodegraph_ui/ui_main.py
 
+import enum
 import sys
+import os, platform
+import subprocess
+
+if __package__ in (None, ""):
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+
 from PyQt5 import QtCore
 from PyQt5.QtWidgets import QGraphicsView
 from PyQt5.QtWidgets import QApplication, QGraphicsView, QMainWindow
@@ -9,19 +16,28 @@ from PyQt5.QtCore import Qt, QEvent, QVariantAnimation
 from PyQt5.QtWidgets import QWidget, QHBoxLayout, QListWidget, QListWidgetItem, QToolBar, QLineEdit, QVBoxLayout
 from PyQt5.QtGui import QCursor
 
-from .ui_node_scene import NodeScene
-from .ui_node_item import NodeItemInput, NodeItemProcessor, NodeItemOutput
-from .ui_connection_item import ConnectionItem
+from scripts.nodegraph_ui.ui_node_scene import NodeScene
+from scripts.nodegraph_ui.ui_node_item import NodeItemInput, NodeItemProcessor, NodeItemOutput
+from scripts.nodegraph_ui.ui_connection_item import ConnectionItem
 
-from .classes import Graph, SocketType, Node, InputSocket, OutputSocket
-from .nodes import SourceImageNode
-from .nodes import *
+from scripts.nodegraph_ui.classes import Graph, SocketType, Node, InputSocket, OutputSocket
+from scripts.nodegraph_ui.nodes import SourceImageNode
+from scripts.nodegraph_ui.nodes import *
 import json
-import os
 import importlib
 import sys
 from PyQt5.QtCore import QFileSystemWatcher, QTimer
 from PyQt5.QtWidgets import QFileDialog
+
+def clear_console():
+    if platform.system()=="Windows":
+        if platform.release() in {"10", "11"}:
+            subprocess.run("", shell=True) #Needed to fix a bug regarding Windows 10; not sure about Windows 11
+            print("\033c", end="")
+        else:
+            subprocess.run(["cls"])
+    else: #Linux and Mac
+        print("\033c", end="")
 
 # Suppress noisy Win32 activation messages from Qt that are harmless
 # (e.g. "No Qt Window found for event ... WM_ACTIVATEAPP"). Install
@@ -90,6 +106,35 @@ class IOTestNode(Node):
         )
         self.inputs["size"].is_optional = True
 
+def display_tmp_txt(text, scene_pos, scene, color=Qt.white, duration_ms=800):
+    try:
+        hint = scene.addText(text)
+        hint.setDefaultTextColor(color)
+        hint.setPos(scene_pos)
+        QTimer.singleShot(duration_ms, lambda: scene.removeItem(hint))
+    except Exception as e:
+        print(f"Error displaying temporary text: {e}")
+
+def parse_file_path(file_path):
+    # remove leading slashes or backslashes from file path if present
+    while file_path.startswith('/') or file_path.startswith('\\'):
+        file_path = file_path[1:]
+
+    # if relative path (not starting with <LETTER>:/ or <LETTER>:\), prepend current working directory
+    if not (len(file_path) >= 3 and file_path[1] == ':' and (file_path[2] == '/' or file_path[2] == '\\')):
+        file_path = os.path.join(os.getcwd(), file_path)
+    
+    # check if the file exists; if not, return None
+    if not os.path.exists(file_path):
+        return None
+    return file_path
+
+
+class DropEventType(enum.Enum):
+    NodeClass = 1
+    ImageFile = 2
+    Unknown = 3
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -154,18 +199,18 @@ class MainWindow(QMainWindow):
                         importlib.reload(passes_mod)
                     except Exception:
                         try:
-                            import passes as passes_mod
+                            from scripts import passes as passes_mod
                             importlib.reload(passes_mod)
                         except Exception:
                             pass
 
                     # reload nodes module
                     try:
-                        from . import nodes as nodes_mod
+                        from scripts.nodegraph_ui import nodes as nodes_mod
                         importlib.reload(nodes_mod)
                     except Exception:
                         try:
-                            import nodegraph_ui.nodes as nodes_mod
+                            from scripts.nodegraph_ui import nodes as nodes_mod
                             importlib.reload(nodes_mod)
                         except Exception:
                             nodes_mod = None
@@ -255,10 +300,10 @@ class MainWindow(QMainWindow):
             def populate(self):
                 # gather node class names from nodes module
                 try:
-                    from . import nodes as nodes_mod
+                    from scripts.nodegraph_ui import nodes as nodes_mod
                 except Exception:
                     try:
-                        import nodes as nodes_mod
+                        from scripts.nodegraph_ui import nodes as nodes_mod
                     except Exception:
                         nodes_mod = None
                 names = []
@@ -409,7 +454,7 @@ class MainWindow(QMainWindow):
                                                         # remove visual ConnectionItem(s) that match these endpoints
                                                         for it_conn in list(s.items()):
                                                             try:
-                                                                from .ui_connection_item import ConnectionItem
+                                                                from scripts.nodegraph_ui.ui_connection_item import ConnectionItem
                                                                 if isinstance(it_conn, ConnectionItem):
                                                                     try:
                                                                         if getattr(it_conn.start_socket, 'socket', None) is out_sock and getattr(it_conn.end_socket, 'socket', None) is in_sock:
@@ -632,15 +677,33 @@ class MainWindow(QMainWindow):
                     pass
                 event.ignore()
 
+            # Drag-and-drop support for adding nodes from the palette or image files.
+            # Drag and drop from outside the window (e.g., from file explorer) is supported for image files.
             def dropEvent(self, event):
                 try:
                     txt = event.mimeData().text()
+                    drop_event_type = DropEventType.Unknown
                     if not txt:
                         event.ignore()
                         return
                     if txt.startswith('node:'):
+                        drop_event_type = DropEventType.NodeClass
+                        print(f"[ui_main] dropEvent: detected node class drop: {txt}")
                         cls_name = txt.split(':', 1)[1]
+                    elif txt.startswith('file:') and txt.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.tiff')):
+                        drop_event_type = DropEventType.ImageFile
+                        print(f"[ui_main] dropEvent: detected image file drop: {txt}")
+                        file_path = txt.split(':', 1)[1]
+                        print(f"[ui_main] dropEvent: \033[32mRaw file path: {file_path}\033[0m")
+                        file_path = parse_file_path(file_path)
+                        print(f"[ui_main] dropEvent: parsed file path: {file_path}")
+                        if file_path is None:
+                            event.ignore()
+                            return
+                                                
+                        # create a SourceImageNode with the file path
                     else:
+                        drop_event_type = DropEventType.Unknown
                         cls_name = txt
 
                     s = self.scene()
@@ -649,37 +712,53 @@ class MainWindow(QMainWindow):
                         return
                     scene_pos = self.mapToScene(event.pos())
                     created = None
-                    try:
-                        print(f"[ui_main] dropEvent: attempting create_node_from_key('{cls_name}')")
-                        created = s.create_node_from_key(cls_name, scene_pos)
-                    except Exception:
-                        created = None
-
-                    from PyQt5.QtCore import QTimer
-                    if created is None:
-                        # show temporary feedback text at drop position
+                    
+                    # detected node class drop
+                    if drop_event_type == DropEventType.NodeClass:
                         try:
-                            hint = s.addText(f'Unknown: {cls_name}')
-                            hint.setDefaultTextColor(Qt.red)
-                            hint.setPos(scene_pos)
-                            QTimer.singleShot(1500, lambda: s.removeItem(hint))
-                        except Exception:
-                            pass
-                        event.ignore()
+                            print(f"[ui_main] dropEvent: attempting create_node_from_key('{cls_name}')")
+                            created = s.create_node_from_key(cls_name, scene_pos)
+                        except Exception as e:
+                            print(f"[ui_main] dropEvent: failed to create node from key '{cls_name}': {e}")
+                            created = None
+                    
+                        from PyQt5.QtCore import QTimer
+                        if created is None:
+                            # show temporary feedback text at drop position
+                            display_tmp_txt(f'Unknown: {cls_name}', scene_pos, s, color=Qt.red, duration_ms=1500)
+
+                            event.ignore()
+                            return
+
+                        # briefly flash a confirmation for successful add
+                        display_tmp_txt(f'Added: {cls_name}', scene_pos, s, color=Qt.white, duration_ms=800)
+
+
+                        event.acceptProposedAction()
+                        return
+                    
+                    elif drop_event_type == DropEventType.ImageFile:
+                        try:
+                            print(f"[ui_main] dropEvent: attempting create_source_image_node('{file_path}', {scene_pos})")
+                            created = s.create_source_image_node(file_path, scene_pos)
+                        except Exception as e:
+                            print(f"[ui_main] dropEvent: failed to create SourceImageNode from file '{file_path}': {e}")
+                        if created is None:
+                            # show temporary feedback text at drop position
+                            display_tmp_txt(f'Failed to add: {file_path}', scene_pos, s, color=Qt.red, duration_ms=1500)
+
+                            event.ignore()
+                            return
+
+                        # briefly flash a confirmation for successful add
+                        display_tmp_txt(f'Added: {file_path}', scene_pos, s, color=Qt.white, duration_ms=800)
+
+
+                        event.acceptProposedAction()
                         return
 
-                    # briefly flash a confirmation for successful add
-                    try:
-                        hint = s.addText(f'Added: {cls_name}')
-                        hint.setDefaultTextColor(Qt.white)
-                        hint.setPos(scene_pos)
-                        QTimer.singleShot(800, lambda: s.removeItem(hint))
-                    except Exception:
-                        pass
-
-                    event.acceptProposedAction()
-                    return
-                except Exception:
+                except Exception as e:
+                    print(f"[ui_main] dropEvent: unexpected error occurred: {e}")
                     event.ignore()
                     return
 
@@ -729,7 +808,7 @@ class MainWindow(QMainWindow):
 
         # populate palette dynamically from available Node classes in nodes.py
         try:
-            from . import nodes as nodes_mod
+            from scripts.nodegraph_ui import nodes as nodes_mod
             # collect nodes by category
             categories = {}
             for name in dir(nodes_mod):
@@ -831,6 +910,9 @@ class MainWindow(QMainWindow):
         # Save / Load graph actions
         save_action = tb.addAction('Save Graph')
         load_action = tb.addAction('Load Graph')
+        
+        clear_console_action = tb.addAction('Clear Console')
+        clear_console_action.triggered.connect(lambda: os.system('cls'))  # ANSI escape code to clear console
 
         def _save_graph():
             try:
@@ -960,7 +1042,7 @@ class MainWindow(QMainWindow):
                 # create nodes
                 created_items = []
                 try:
-                    from . import nodes as nodes_mod
+                    from scripts.nodegraph_ui import nodes as nodes_mod
                 except Exception:
                     nodes_mod = None
 
@@ -1053,7 +1135,7 @@ class MainWindow(QMainWindow):
                                     end_ui = None
                                     for it in list(self.scene.items()):
                                         try:
-                                            from .ui_socket_item import SocketItem
+                                            from scripts.nodegraph_ui.ui_socket_item import SocketItem
                                             if isinstance(it, SocketItem):
                                                 try:
                                                     if getattr(it, 'socket', None) is out_sock:

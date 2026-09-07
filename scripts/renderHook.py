@@ -10,10 +10,10 @@ from PIL import Image
 import io
 import hashlib
 
-import passes
+from scripts import passes
 
-from guiElements.modernSlotTableWidget import ModernSlotTableWidget
-from guiElements.renderPassWidget import RenderPassWidget
+from scripts.guiElements.modernSlotTableWidget import ModernSlotTableWidget
+from scripts.guiElements.renderPassWidget import RenderPassWidget
 
 if TYPE_CHECKING:
     from masterGUI import GUI
@@ -26,10 +26,10 @@ from collections import defaultdict, deque
 
 from PIL import Image
 
-import passes
+from scripts import passes
 
-from guiElements.modernSlotTableWidget import ModernSlotTableWidget
-from guiElements.renderPassWidget import RenderPassWidget
+from scripts.guiElements.modernSlotTableWidget import ModernSlotTableWidget
+from scripts.guiElements.renderPassWidget import RenderPassWidget
 
 if TYPE_CHECKING:
     from masterGUI import GUI
@@ -67,7 +67,7 @@ def saveImageToSlot(image: Image.Image, slotName: Any, slotTable: 'ModernSlotTab
     slot_key = slot_enum.value if slot_enum is not None else slotName
     if slot_enum == Slot.SLOT15 or (isinstance(slot_key, str) and slot_key == "slot15"):
         try:
-            from utils import get_output_dir
+            from scripts.utils import get_output_dir
 
             output_dir = get_output_dir()
             os.makedirs(output_dir, exist_ok=True)
@@ -98,10 +98,10 @@ def getSlotDependencies(renderPassWidget: 'RenderPassWidget') -> Set[str]:
 
         from PIL import Image
 
-        import passes
+        from scripts import passes
 
-        from guiElements.modernSlotTableWidget import ModernSlotTableWidget
-        from guiElements.renderPassWidget import RenderPassWidget
+        from scripts.guiElements.modernSlotTableWidget import ModernSlotTableWidget
+        from scripts.guiElements.renderPassWidget import RenderPassWidget
 
 
         def loadImageFromSlot(slotName: str, slotTable: 'ModernSlotTableWidget') -> Image.Image:
@@ -115,7 +115,7 @@ def getSlotDependencies(renderPassWidget: 'RenderPassWidget') -> Set[str]:
         def saveImageToSlot(image: Image.Image, slotName: str, slotTable: 'ModernSlotTableWidget') -> None:
             if slotName == "slot15":
                 try:
-                    from utils import get_output_dir
+                    from scripts.utils import get_output_dir
 
                     output_dir = get_output_dir()
                     os.makedirs(output_dir, exist_ok=True)
@@ -136,10 +136,10 @@ from collections import defaultdict, deque
 
 from PIL import Image
 
-import passes
+from scripts import passes
 
-from guiElements.modernSlotTableWidget import ModernSlotTableWidget
-from guiElements.renderPassWidget import RenderPassWidget
+from scripts.guiElements.modernSlotTableWidget import ModernSlotTableWidget
+from scripts.guiElements.renderPassWidget import RenderPassWidget
 
 if TYPE_CHECKING:
     from masterGUI import GUI
@@ -156,7 +156,7 @@ def loadImageFromSlot(slotName: str, slotTable: 'ModernSlotTableWidget') -> Imag
 def saveImageToSlot(image: Image.Image, slotName: str, slotTable: 'ModernSlotTableWidget') -> None:
     if slotName == "slot15":
         try:
-            from utils import get_output_dir
+            from scripts.utils import get_output_dir
 
             output_dir = get_output_dir()
             os.makedirs(output_dir, exist_ok=True)

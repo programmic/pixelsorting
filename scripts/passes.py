@@ -20,8 +20,8 @@ from PIL import Image
 from tqdm import tqdm
 from enum import Enum
 
-from . import converters
-from .timing import timing
+from scripts import converters
+from scripts.timing import timing
 
 ProgressCallback = Callable[[int, str], None]
 
@@ -2914,7 +2914,7 @@ def noise(
         print(f"Failed to convert image to numpy array: {e}")
         raise Exception from e
 
-    from . import noise
+    import noise
 
     noise_type = noise_type.lower()
     if noise_type == "gaussian":

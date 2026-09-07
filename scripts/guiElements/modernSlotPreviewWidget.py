@@ -1,5 +1,5 @@
 # modernSlotPreviewWidget.py
-from guiElements.preview_manager_instance import preview_manager
+from scripts.guiElements.preview_manager_instance import preview_manager
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QGraphicsDropShadowEffect,
                               QHBoxLayout, QFrame)
 from PySide6.QtCore import Qt, QPoint, QPropertyAnimation, QRect, QSize, QEvent

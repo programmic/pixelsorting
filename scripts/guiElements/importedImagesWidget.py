@@ -3,7 +3,7 @@ from PySide6.QtCore import Qt, Signal, QMimeData, QPoint, QUrl
 from PySide6.QtGui import QDrag, QPixmap, QDropEvent, QDragEnterEvent
 from PIL.ImageQt import ImageQt
 from PIL import Image
-from guiElements.previewManager import preview_manager
+from scripts.guiElements.previewManager import preview_manager
 import os
 
 class ImportedImagesListWidget(QListWidget):

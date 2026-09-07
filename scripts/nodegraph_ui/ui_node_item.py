@@ -13,7 +13,7 @@ from PIL.ImageQt import ImageQt
 from PyQt5.QtWidgets import QSizePolicy
 from PyQt5.QtCore import QPoint
 from PyQt5.QtGui import QTransform
-from .viewer_fullscreen import FullscreenViewer
+from scripts.nodegraph_ui.viewer_fullscreen import FullscreenViewer
 
 
 # ViewerDialog: standalone zoomable/pannable dark-mode image viewer
@@ -285,9 +285,9 @@ class ViewerDialog(QDialog):
             except Exception:
                 pass
             return False
-from .ui_socket_item import SocketItem, RADIUS
-from .nodes import ViewerNode, RenderToFileNode, SourceImageNode, DisplayDataNode
-from .classes import SocketType, InputNode, OutputNode, ProcessorNode
+from scripts.nodegraph_ui.ui_socket_item import SocketItem, RADIUS
+from scripts.nodegraph_ui.nodes import ViewerNode, RenderToFileNode, SourceImageNode, DisplayDataNode
+from scripts.nodegraph_ui.classes import SocketType, InputNode, OutputNode, ProcessorNode
 
 
 # NodeItemInput: for InputNode
@@ -326,7 +326,7 @@ class NodeItemInput(QGraphicsRectItem):
         # or display_name match.
         is_reroute = False
         try:
-            from .classes import rerouteNode
+            from scripts.nodegraph_ui.classes import rerouteNode
             if isinstance(self.node, rerouteNode):
                 is_reroute = True
         except Exception:
@@ -389,7 +389,7 @@ class NodeItemInput(QGraphicsRectItem):
         self._title_label.setDefaultTextColor(QColor(180, 220, 180))
         self._title_label.setPos(10, 5)
         y_offset = self.MARGIN_TOP
-        from .nodes import ValueIntNode, ValueFloatNode, ValueStringNode, ValueBoolNode, ValueColorNode, ValuePaletteNode
+        from scripts.nodegraph_ui.nodes import ValueIntNode, ValueFloatNode, ValueStringNode, ValueBoolNode, ValueColorNode, ValuePaletteNode
         if isinstance(self.node, (ValueIntNode, ValueFloatNode, ValueStringNode, ValueBoolNode)):
             # For value nodes, create the output socket (usually named 'value')
             y = self.MARGIN_TOP
@@ -412,12 +412,27 @@ class NodeItemInput(QGraphicsRectItem):
         if isinstance(self.node, SourceImageNode):
             combo = QComboBox()
             combo.addItems(getattr(self.node, '_image_files', []))
+
+            # Set the initial index without triggering the change handler.
+            combo.blockSignals(True)
             combo.setCurrentIndex(getattr(self.node, 'index', 0))
+            combo.blockSignals(False)
+
             combo.setMaximumWidth(self.WIDTH - 20)
+
             def on_index_changed(idx):
                 self.node.index = idx
-                self.node.compute()
+
+                # SourceImageNode is an input node. Changing its selected
+                # image should invalidate its output, not directly call
+                # the abstract Node.compute().
+                try:
+                    self.node.user_modified()
+                except Exception:
+                    pass
+
             combo.currentIndexChanged.connect(on_index_changed)
+
             proxy = QGraphicsProxyWidget(self)
             proxy.setWidget(combo)
             proxy.setPos(10, y_offset)

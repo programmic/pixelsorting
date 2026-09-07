@@ -1,24 +1,29 @@
 # masterGUI.py
-from guiElements.preview_manager_instance import preview_manager
-
+import os
 import sys
+
+if __package__ in (None, ""):
+    sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+from scripts.guiElements.preview_manager_instance import preview_manager
+
 import subprocess
 from PySide6.QtWidgets import *
 from PySide6.QtCore import Qt, QThread, QTimer, QObject, QEvent
 from PySide6.QtGui import QPixmap
 from superqt import QSearchableListWidget
-from utils import get_output_dir
 
-from guiElements.modernSlotTableWidget import ModernSlotTableWidget
-from guiElements.renderPassWidget import RenderPassWidget
-from guiElements.importedImagesWidget import ImportedImagesListWidget
-from renderWorker import RenderWorker
+from scripts.guiElements.modernSlotTableWidget import ModernSlotTableWidget
+from scripts.guiElements.renderPassWidget import RenderPassWidget
+from scripts.guiElements.importedImagesWidget import ImportedImagesListWidget
+from scripts.renderWorker import RenderWorker
 from PIL import Image
 import random
 
-import renderHook
+from scripts import renderHook
 import json
 import os
+from scripts.utils import get_output_dir
 
 
 class SmoothScroller(QObject):

@@ -5,7 +5,7 @@ from PyQt5.QtGui import QPainterPath, QPen, QBrush, QLinearGradient
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor
 
-from .ui_socket_item import SOCKET_COLORS
+from scripts.nodegraph_ui.ui_socket_item import SOCKET_COLORS
 
 class ConnectionItem(QGraphicsPathItem):
     def __init__(self, start_socket):

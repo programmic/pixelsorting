@@ -1,7 +1,7 @@
 # scripts/nodegraph_ui/nodes_math.py
 # Math nodes for the node graph UI, separated for organization
 
-from .classes import ProcessorNode, InputSocket, OutputSocket, SocketType
+from scripts.nodegraph_ui.classes import ProcessorNode, InputSocket, OutputSocket, SocketType
 
 class AddNode(ProcessorNode):
     @property

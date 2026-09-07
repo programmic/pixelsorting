@@ -5,9 +5,9 @@ from PySide6.QtWidgets import (QWidget, QHBoxLayout, QPushButton, QGraphicsDropS
 from PySide6.QtCore import Qt, Signal, QPoint, QSize, QTimer, QRect, QEvent
 from PySide6.QtGui import (QPixmap, QPainter, QBrush, QColor, QPen, QLinearGradient,
                           QPainterPath, QFont, QFontMetrics, QPalette)
-from guiElements.modernSlotPreviewWidgetMerged import ModernSlotPreviewWidget
-from guiElements.slotContextMenu import SlotContextMenu
-from guiElements.previewManager import preview_manager
+from scripts.guiElements.modernSlotPreviewWidgetMerged import ModernSlotPreviewWidget
+from scripts.guiElements.slotContextMenu import SlotContextMenu
+from scripts.guiElements.previewManager import preview_manager
 import weakref
 from PIL.ImageQt import ImageQt
 import math
@@ -352,7 +352,7 @@ class ModernSlotTableWidget(QWidget):
             self.slot_images[slot_name] = image
         # Update internal image cache entry
         try:
-            import renderHook
+            from scripts import renderHook
             if not hasattr(self, '_image_cache') or self._image_cache is None:
                 self._image_cache = {}
             img_hash = renderHook._compute_image_hash(image)

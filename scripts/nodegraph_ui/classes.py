@@ -121,7 +121,11 @@ class Node:
         return False
     
     def compute(self):
-        raise NotImplementedError("Compute method must be implemented by subclasses")
+        # Subclasses should override this method to perform their computation and set their output values.
+        
+        # register extending subclass which had not implemented compute method
+        print(f"[Node] Compute method not implemented for {self.__class__.__name__}")
+        raise NotImplementedError("Compute method must be implemented by subclasses.")
 
 class InputNode(Node):
     """Input nodes have no input sockets, but can easily be extended to have graphical input controls like text input, sliders, toggles, dropdowns, etc."""

@@ -1,14 +1,14 @@
 # scripts/nodegraph_ui/nodes.py
 
-from .classes import InputNode, ProcessorNode, OutputNode, SocketType, InputSocket, OutputSocket
+from scripts.nodegraph_ui.classes import InputNode, ProcessorNode, OutputNode, SocketType, InputSocket, OutputSocket
 from PIL import Image
 import time
 import os
 
-from .. import passes
+from scripts import passes
 
 # Math nodes imported to keep nodes.py organized
-from .nodes_math import *
+from scripts.nodegraph_ui.nodes_math import *
 
 # Image Processing Nodes
 
@@ -1100,6 +1100,9 @@ class SourceImageNode(InputNode):
 
         self._images: list[Image.Image] = []
         self._image_files: list[str] = []
+        
+        self._tmp_img_paths: list[str] = []  # Store paths of temporary images added via add_img_tmp
+        
         self._load_images()
     
     def _load_images(self):
@@ -1110,6 +1113,68 @@ class SourceImageNode(InputNode):
                 img = Image.open(os.path.join("assets/images", file)).convert("RGB")
                 self._images.append(img)
                 self._image_files.append(file)
+        for path in self._tmp_img_paths:
+            if os.path.exists(path):
+                try:
+                    img = Image.open(path).convert("RGB")
+                    self._images.append(img)
+                    self._image_files.append(os.path.basename(path))
+                except Exception as e:
+                    print(f"SourceImageNode: Failed to load temporary image from {path} ({e}).")
+            else:
+                print(f"SourceImageNode: Temporary image path does not exist: {path}")
+    
+    def add_img_tmp(self, img_path: str):
+        """
+        Add a temporary external image to the source node.
+        """
+        if img_path in self._tmp_img_paths:
+            return
+
+        if not os.path.exists(img_path):
+            print(f"SourceImageNode: Temporary image path does not exist: {img_path}")
+            return
+
+        try:
+            img = Image.open(img_path).convert("RGB")
+
+            self._tmp_img_paths.append(img_path)
+            self._images.append(img)
+            self._image_files.append(os.path.basename(img_path))
+
+        except Exception as e:
+            print(f"SourceImageNode: Failed to load image from {img_path} ({e}).")
+
+
+    def reload_images(self, image_paths: list[str]):
+        """
+        Replace the current temporary/external images with the provided images.
+        """
+        self._tmp_img_paths.clear()
+        self._images.clear()
+        self._image_files.clear()
+
+        for path in image_paths:
+            if not os.path.exists(path):
+                print(f"SourceImageNode: Image path does not exist: {path}")
+                continue
+
+            try:
+                img = Image.open(path).convert("RGB")
+
+                self._tmp_img_paths.append(path)
+                self._images.append(img)
+                self._image_files.append(os.path.basename(path))
+
+            except Exception as e:
+                print(f"SourceImageNode: Failed to load image from {path} ({e}).")
+        def compute(self):
+            if not self._images:
+                self.outputs["image"]._cache = None
+                return
+            
+            idx = max(0, min(self.index, len(self._images) - 1))
+            self.outputs["image"]._cache = self._images[idx]
     
     def compute(self):
         if not self._images:

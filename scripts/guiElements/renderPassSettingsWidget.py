@@ -304,7 +304,7 @@ class RenderPassSettingsWidget(QWidget):
 
                 def on_pick():
                     try:
-                        from guiElements.hsvColorDialog import HSVColorDialog
+                        from scripts.guiElements.hsvColorDialog import HSVColorDialog
                         hexc = HSVColorDialog.get_color(self)
                         if hexc:
                             _add_color(hexc)
@@ -319,7 +319,7 @@ class RenderPassSettingsWidget(QWidget):
                     # If that input is unset, fall back to slot0.
                     slot_to_use = None
                     parent = self.parent()
-                    from guiElements.renderPassWidget import RenderPassWidget
+                    from scripts.guiElements.renderPassWidget import RenderPassWidget
                     while parent is not None and not isinstance(parent, RenderPassWidget):
                         parent = parent.parent()
 
@@ -359,7 +359,7 @@ class RenderPassSettingsWidget(QWidget):
                         try:
                             img = gui.slotTable.get_image(slot_to_use)
                             if img:
-                                from guiElements.imageEyeDropperDialog import ImageEyeDropperDialog
+                                from scripts.guiElements.imageEyeDropperDialog import ImageEyeDropperDialog
                                 hexc = ImageEyeDropperDialog.pick_from_pil(img, self)
                                 if hexc:
                                     _add_color(hexc)
@@ -374,7 +374,7 @@ class RenderPassSettingsWidget(QWidget):
                 def _refresh_container_size():
                     # Walk up to find the RenderPassWidget container and update its size
                     try:
-                        from guiElements.renderPassWidget import RenderPassWidget
+                        from scripts.guiElements.renderPassWidget import RenderPassWidget
                     except Exception:
                         RenderPassWidget = None
                     parent = self.parent()

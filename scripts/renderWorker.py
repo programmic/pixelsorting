@@ -1,6 +1,6 @@
 from __future__ import annotations
 from PySide6.QtCore import QObject, Signal
-import renderHook
+from scripts import renderHook
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:

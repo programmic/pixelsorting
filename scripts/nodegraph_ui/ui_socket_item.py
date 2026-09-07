@@ -3,7 +3,7 @@ from PyQt5.QtCore import Qt, QVariantAnimation, QPoint, QTimer
 from PyQt5.QtGui import QCursor
 from PyQt5.QtGui import QColor
 
-from .classes import SocketType, InputSocket
+from scripts.nodegraph_ui.classes import SocketType, InputSocket
 
 RADIUS = 6
 

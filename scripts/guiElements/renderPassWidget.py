@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import Optional, Callable
 from PySide6.QtWidgets import *
 from PySide6.QtCore import Qt
-from guiElements.renderPassSettingsWidget import *
-from guiElements.maskWidget import MaskWidget
+from scripts.guiElements.renderPassSettingsWidget import *
+from scripts.guiElements.maskWidget import MaskWidget
 
 import json
 import os
@@ -136,7 +136,7 @@ class RenderPassWidget(QWidget):
                 if img is None:
                     return None
                 # Use image eye-dropper dialog
-                from guiElements.imageEyeDropperDialog import ImageEyeDropperDialog
+                from scripts.guiElements.imageEyeDropperDialog import ImageEyeDropperDialog
                 return ImageEyeDropperDialog.pick_from_pil(img, self)
             except Exception:
                 return None

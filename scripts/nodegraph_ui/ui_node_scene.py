@@ -1,11 +1,11 @@
 # scripts/nodegraph_ui/ui_node_scene.py
 
 from PyQt5.QtWidgets import QGraphicsScene, QGraphicsProxyWidget
-from PyQt5.QtCore import QTimer, Qt
+from PyQt5.QtCore import QTimer, Qt, QPointF
 from PyQt5.QtGui import QColor
 
-from .ui_connection_item import ConnectionItem
-from .ui_socket_item import SocketItem
+from scripts.nodegraph_ui.ui_connection_item import ConnectionItem
+from scripts.nodegraph_ui.ui_socket_item import SocketItem
 
 class NodeScene(QGraphicsScene):
     def __init__(self, graph):
@@ -20,23 +20,25 @@ class NodeScene(QGraphicsScene):
         self._conn_timer.start(60)  # ~16 FPS — sufficient for smooth interaction
         # visual connection currently highlighted as 'would be overwritten'
         self._highlighted_connection = None
+        
     def create_node_from_key(self, cls_name: str, scene_pos):
         """Create a node by class name and place it at scene_pos.
 
         This function is robust: it tries a mapping, getattr on the nodes
         module, and a normalized-name fallback (remove spaces, append 'Node').
         """
+        print("[ui_node_scene] create_node_from_key: cls_name=", cls_name, "scene_pos=", scene_pos)
         try:
             # attempt package-relative import first, then common fallbacks
             nodes_mod = None
             try:
-                from . import nodes as nodes_mod
+                from scripts.nodegraph_ui import nodes as nodes_mod
             except Exception:
                 try:
-                    from . import nodes as nodes_mod
+                    from scripts.nodegraph_ui import nodes as nodes_mod
                 except Exception:
                     try:
-                        import nodes as nodes_mod
+                        from scripts.nodegraph_ui import nodes as nodes_mod
                     except Exception:
                         nodes_mod = None
 
@@ -96,8 +98,8 @@ class NodeScene(QGraphicsScene):
             node = cls()
             self.graph.add_node(node)
             try:
-                from .ui_node_item import NodeItemInput, NodeItemProcessor, NodeItemOutput
-                from .classes import InputNode, ProcessorNode, OutputNode
+                from scripts.nodegraph_ui.ui_node_item import NodeItemInput, NodeItemProcessor, NodeItemOutput
+                from scripts.nodegraph_ui.classes import InputNode, ProcessorNode, OutputNode
                 if isinstance(node, InputNode):
                     item = NodeItemInput(node)
                 elif isinstance(node, ProcessorNode):
@@ -113,6 +115,31 @@ class NodeScene(QGraphicsScene):
                 print(f"[ui_node_scene] create_node_from_key: failed to create NodeItem for {cls_name}: {e}")
                 return None
         except Exception:
+            return None
+
+    def create_source_image_node(self, file_path: str, scene_pos: QPointF):
+        """Create a SourceImageNode with the given file path and place it at scene_pos."""
+        try:
+            from scripts.nodegraph_ui.nodes import SourceImageNode
+            node = SourceImageNode()
+
+            try:
+                node.add_img_tmp(file_path)
+            except Exception as e:
+                print(f"[ui_node_scene] create_source_image_node: failed to set external images: {e}")
+            self.graph.add_node(node)
+            try:
+                from scripts.nodegraph_ui.ui_node_item import NodeItemInput
+                item = NodeItemInput(node)
+                item.setPos(scene_pos)
+                self.addItem(item)
+                return item
+            except Exception as e:
+                print(f"[ui_node_scene] create_source_image_node: failed to create NodeItemInput: {e}")
+                return None
+        except Exception as e:
+            print(f"[ui_node_scene] create_source_image_node: failed to create SourceImageNode: {e}")
+            print(f"[ui_node_scene] create_source_image_node: file_path={file_path}, scene_pos={scene_pos}")
             return None
 
     def start_connection(self, socket_item):
@@ -400,8 +427,8 @@ class NodeScene(QGraphicsScene):
                 self.temp_connection.set_end_socket(target_socket)
                 # Do not trigger computation on connect. Update viewer UI state
                 try:
-                    from .ui_node_item import NodeItem
-                    from .nodes import ViewerNode
+                    from scripts.nodegraph_ui.ui_node_item import NodeItem
+                    from scripts.nodegraph_ui.nodes import ViewerNode
                     for it in list(self.items()):
                         try:
                             if isinstance(it, NodeItem) and getattr(it, 'node', None) is in_socket.node and isinstance(it.node, ViewerNode):
@@ -445,8 +472,8 @@ class NodeScene(QGraphicsScene):
         try:
             if not target_socket and (event.modifiers() & Qt.ControlModifier):
                 try:
-                    from .classes import rerouteNode, SocketType
-                    from .ui_node_item import NodeItemProcessor
+                    from scripts.nodegraph_ui.classes import rerouteNode, SocketType
+                    from scripts.nodegraph_ui.ui_node_item import NodeItemProcessor
                 except Exception:
                     rerouteNode = None
                     NodeItemProcessor = None
@@ -593,10 +620,10 @@ class NodeScene(QGraphicsScene):
                 return
             # robust import for NodeItem (package vs script execution)
             try:
-                from .ui_node_item import NodeItem
+                from scripts.nodegraph_ui.ui_node_item import NodeItem
             except Exception:
                 try:
-                    from ui_node_item import NodeItem
+                    from scripts.nodegraph_ui.ui_node_item import NodeItem
                 except Exception:
                     try:
                         from scripts.nodegraph_ui.ui_node_item import NodeItem

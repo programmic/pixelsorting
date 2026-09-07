@@ -4,7 +4,7 @@
 
 def get_preview_manager():
     """Get the preview manager instance."""
-    from guiElements.previewManager import PreviewManager
+    from scripts.guiElements.previewManager import PreviewManager
     return PreviewManager.instance()
 
 # Create the global instance when accessed
