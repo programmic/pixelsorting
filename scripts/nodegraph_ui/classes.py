@@ -55,7 +55,18 @@ class OutputSocket:
         if not self._dirty:
             self._dirty = True
             # Optionally: notify dependents if needed
+            for dep in self.node.dependents:
+                if dep is not self.node:
+                    dep._mark_dirty_from_upstream()
 
+    def is_connected(self) -> bool:
+        """Returns True if this output is used by any connection in the graph."""
+        # Check if any dependent node has an input socket connected to this output socket
+        for dep in self.node.dependents:
+            for inp in dep.inputs.values():
+                if inp.connection and inp.connection.output_socket is self:
+                    return True
+        return False
 
 class Connection:
     def __init__(self, output_socket: OutputSocket, input_socket: InputSocket):

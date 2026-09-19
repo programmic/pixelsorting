@@ -1005,7 +1005,7 @@ class MainWindow(QMainWindow):
 
         def _load_graph():
             try:
-                path, _ = QFileDialog.getOpenFileName(self, 'Load Graph', '', 'JSON Files (*.json)')
+                path, _ = QFileDialog.getOpenFileName(self, 'Load Graph', 'saved', 'JSON Files (*.json)')
                 if not path:
                     return
                 with open(path, 'r', encoding='utf-8') as f:

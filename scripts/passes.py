@@ -16,29 +16,161 @@ from math import exp, pi
 import colorsys
 import numpy as np
 import pyopencl as cl
-from PIL import Image
+from PIL import Image, ImageDraw
 from tqdm import tqdm
 from enum import Enum
 
 from scripts import converters
 from scripts.timing import timing
 
+
 ProgressCallback = Callable[[int, str], None]
 
 
-def getImageData(img: Image.Image) -> dict:
+def _create_opencl_context():
+    platforms = cl.get_platforms()
+    if not platforms:
+        raise RuntimeError("No OpenCL platforms available")
+
+    devices = []
+    for platform in platforms:
+        try:
+            devices = platform.get_devices(device_type=cl.device_type.GPU)
+            if devices:
+                break
+        except Exception:
+            continue
+
+    if not devices:
+        for platform in platforms:
+            try:
+                devices = platform.get_devices(device_type=cl.device_type.CPU)
+                if devices:
+                    break
+            except Exception:
+                continue
+
+    if not devices:
+        raise RuntimeError("No OpenCL devices available")
+
+    ctx = cl.Context(devices)
+    return ctx, cl.CommandQueue(ctx)
+
+@contextlib.contextmanager
+def _opencl_context():
+    ctx = None
+    queue = None
+    try:
+        ctx, queue = _create_opencl_context()
+        yield ctx, queue
+    finally:
+        if queue is not None:
+            try:
+                queue.finish()
+            except Exception:
+                pass
+            release = getattr(queue, "release", None)
+            if release is not None:
+                release()
+        if ctx is not None:
+            release = getattr(ctx, "release", None)
+            if release is not None:
+                release()
+
+@timing
+def getImageData(img: Image.Image, progress_callback: Optional[ProgressCallback] = None) -> dict:
     """Returns dictionary with image metadata.\nDictionary: width, height, mode, info, format"""
     width, height = img.size
     mode = img.mode
     info = img.info
     format = img.format
+    primary_color = _getPrimaryColor(img,progress_callback=progress_callback) if img else None
+    
     return {
         "width": width,
         "height": height,
         "mode": mode,
         "info": info,
-        "format": format
+        "format": format,
+        "primary_color": primary_color
     }
+
+@timing
+def _getPrimaryColor(
+    img: Image.Image, 
+    tolerance: int = 10, 
+    progress_callback: Optional[ProgressCallback] = None
+) -> Tuple[int, int, int]:
+    """Get the primary color of the image efficiently using color binning."""
+    print("[PixelSorting] Finding primary color...")
+    if tolerance < 0:
+        raise ValueError("Tolerance must be non-negative")
+
+    # 1. Downsample image if it is too large to speed up processing dramatically
+    MAX_DIM = 200
+    if img.width > MAX_DIM or img.height > MAX_DIM:
+        if progress_callback:
+            progress_callback(10, "Downsampling image...")
+        img = img.resize((MAX_DIM, MAX_DIM), Image.Resampling.NEAREST)
+
+    img = img.convert("RGB")
+    pixels = list(img.getdata())
+    
+    if progress_callback:
+        progress_callback(30, "Binning colors...")
+
+    bin_size = max(1, tolerance)
+    
+    color_bins = {}
+    bin_to_exact_colors = {}
+
+    for r, g, b in pixels:
+        bin_key = (r // bin_size, g // bin_size, b // bin_size)
+        
+        color_bins[bin_key] = color_bins.get(bin_key, 0) + 1
+        
+        if bin_key not in bin_to_exact_colors:
+            bin_to_exact_colors[bin_key] = {}
+        exact_color = (r, g, b)
+        bin_to_exact_colors[bin_key][exact_color] = bin_to_exact_colors[bin_key].get(exact_color, 0) + 1
+
+    if progress_callback:
+        progress_callback(80, "Finding most frequent color group...")
+
+    best_bin = max(color_bins, key=color_bins.get)
+    
+    primary_color = max(bin_to_exact_colors[best_bin], key=bin_to_exact_colors[best_bin].get)
+
+    if progress_callback:
+        progress_callback(100, "Primary color found.")
+        
+    print(f"[PixelSorting] Primary color found: {primary_color} with tolerance {tolerance}")
+    return primary_color
+
+def split_channels(img: Image.Image, use_additional_channels: bool = False) -> dict[str, Image.Image]:
+    """Split an image into its R, G, B channels and return as a dictionary."""
+    if img.mode != 'RGB':
+        img = img.convert('RGB')
+    r, g, b = img.split()
+    
+    # tint the channels for better visibility. for each pixel, set the other channels to 0
+    r = Image.merge('RGB', (r, Image.new('L', img.size), Image.new('L', img.size)))
+    g = Image.merge('RGB', (Image.new('L', img.size), g, Image.new('L', img.size)))
+    b = Image.merge('RGB', (Image.new('L', img.size), Image.new('L', img.size), b))
+
+    if not use_additional_channels:
+        return {'R': r, 'G': g, 'B': b}
+    else:
+        print("Generating additional channels: luminance, brightness...")
+        # create additional channels; luminance, brightness, alpha
+        luminance = img.convert('L')
+        brightness = Image.new('L', img.size)
+        for x in range(img.width):
+            for y in range(img.height):
+                r_val, g_val, b_val = img.getpixel((x, y))
+                brightness.putpixel((x, y), int((r_val + g_val + b_val) / 3))
+        alpha = img.getchannel('A') if 'A' in img.getbands() else Image.new('L', img.size, 255)
+        return {'R': r, 'G': g, 'B': b, 'lum': luminance, 'br': brightness, 'aph': alpha}
 
 def _ensure_rgba(img: Image.Image) -> Image.Image: #globalignore
     """Ensure image is in RGBA mode, preserving alpha if present."""
@@ -564,8 +696,6 @@ def blur_box(
 @timing
 def blur_box_gpu(img: Image.Image, blur_kernel: int) -> Image.Image: #globalignore
     """GPU-accelerated box blur with proper resource cleanup. Accepts kernel_size and converts to radius."""
-    from gpu_context import opencl_context
-
     img = img.convert("RGB")
     img_np = np.array(img).astype(np.uint8)
     height, width, channels = img_np.shape
@@ -573,7 +703,7 @@ def blur_box_gpu(img: Image.Image, blur_kernel: int) -> Image.Image: #globaligno
     # Convert kernel_size to radius
     radius = (blur_kernel - 1) // 2
 
-    with opencl_context() as (ctx, queue):
+    with _opencl_context() as (ctx, queue):
         # OpenCL-Programm (Box Blur)
         shader_path = os.path.join(os.path.dirname(__file__), "shaders", "box_blur.opencl")
         with open(shader_path, "r", encoding="utf-8") as f:
@@ -1015,12 +1145,6 @@ def kuwahara_gpu(img: Image.Image, kernel_size: float) -> Image.Image: #globalig
     """
     # Convert kernel_size to integer
     kernel_size = int(kernel_size)
-    try:
-        from gpu_context import opencl_context
-    except ImportError:
-        print("Could not import GPU context, using CPU fallback...")
-        return kuwahara(img, kernel_size)
-    
     def _kuwahara_cpu_fallback(img: Image.Image, ksize: int) -> Image.Image:
         """CPU fallback implementation when GPU/OpenCL is unavailable."""
         print("GPU/OpenCL unavailable, using CPU fallback...")
@@ -1036,7 +1160,7 @@ def kuwahara_gpu(img: Image.Image, kernel_size: float) -> Image.Image: #globalig
         with open(cl_path, "r", encoding="utf-8") as f:
             program_src = f.read()
 
-        with opencl_context() as (ctx, queue):
+        with _opencl_context() as (ctx, queue):
             with _suppress_output():
                 program = cl.Program(ctx, program_src).build()
 
@@ -1081,12 +1205,6 @@ def anisotropic_kuwahara_gpu(img: Image.Image, kernel_size: float, regions: int 
     """
     kernel_size = int(kernel_size)
 
-    try:
-        from gpu_context import opencl_context
-    except ImportError:
-        print("Could not import GPU context, using CPU fallback...")
-        return kuwahara(img, kernel_size)  # fallback to your CPU implementation
-
     def _cpu_fallback(img: Image.Image, ksize: int, regions: int) -> Image.Image:
         print("GPU/OpenCL unavailable, using CPU fallback...")
         return kuwahara(img, ksize)  # keep your classic CPU Kuwahara as fallback
@@ -1101,7 +1219,7 @@ def anisotropic_kuwahara_gpu(img: Image.Image, kernel_size: float, regions: int 
         with open(cl_path, "r", encoding="utf-8") as f:
             program_src = f.read()
 
-        with opencl_context() as (ctx, queue):
+        with _opencl_context() as (ctx, queue):
             with _suppress_output():
                 program = cl.Program(ctx, program_src).build()
 
@@ -1177,36 +1295,10 @@ def anisotropic_kuwahara_papari_gpu( #globalignore
     if radius < 1:
         return img.copy()
 
-    # Try to get a GPU context
-    ctx = None
-    queue = None
     try:
-        try:
-            from gpu_context import opencl_context  # optional helper if the user has it
-            ctx, queue = opencl_context()
-        except Exception:
-            if not _HAS_PYOPENCL:
-                raise ImportError("pyopencl not available")
-            # Create default context/queue
-            platforms = cl.get_platforms()
-            if not platforms:
-                raise RuntimeError("No OpenCL platforms found")
-            # pick first GPU device, else CPU
-            dev = None
-            for p in platforms:
-                gpus = [d for d in p.get_devices() if d.type & cl.device_type.GPU]
-                if gpus:
-                    dev = gpus[0]; break
-            if dev is None:
-                # fallback to any device
-                for p in platforms:
-                    ds = p.get_devices()
-                    if ds:
-                        dev = ds[0]; break
-            if dev is None:
-                raise RuntimeError("No OpenCL devices found")
-            ctx = cl.Context([dev])
-            queue = cl.CommandQueue(ctx)
+        if not _HAS_PYOPENCL:
+            raise ImportError("pyopencl not available")
+        ctx, queue = _create_opencl_context()
     except Exception as e:
         raise RuntimeError(f"[AKF] OpenCL unavailable ({e}).")
 
@@ -1821,12 +1913,6 @@ def meanShiftClusteringGPU(
     if max_iter < 1:
         raise ValueError("Max iterations must be positive")
 
-    try:
-        from gpu_context import opencl_context
-    except ImportError:
-        print("\033[91mCould not import GPU context, using CPU fallback...\033[0m")
-        return meanShiftCluster(img, spatial_radius, color_radius, max_iter)
-
     def _cpu_fallback(img: Image.Image, s_rad: int, c_rad: int, m_iter: int) -> Image.Image:
         """CPU fallback implementation when GPU/OpenCL is unavailable."""
         print("\033[91mGPU/OpenCL unavailable, using CPU fallback...\033[0m")
@@ -1842,7 +1928,7 @@ def meanShiftClusteringGPU(
         with open(cl_path, "r", encoding="utf-8") as f:
             program_src = f.read()
 
-        with opencl_context() as (ctx, queue):
+        with _opencl_context() as (ctx, queue):
             with _suppress_output():
                 program = cl.Program(ctx, program_src).build()
 
@@ -3004,3 +3090,259 @@ def calculate_image_normals(
 
     print(f"[NormalNode]: Normal map calculation complete, returning image")
     return Image.fromarray(normal_map, "RGB")
+
+def sketch_generator(
+    input_image: Image.Image, 
+    max_count: int = 100,
+    sub_step: int = 800,
+    perception: int = 5,
+    drop_alpha: int = 120,
+    draw_alpha: int = 40,
+    draw_weight: int = 1,
+    max_speed: float = 3.0,
+    noise_scale: float = 100.0,
+    noise_influence: float = 0.05,
+    drop_rate: float = 0.0044,
+    canvas_color: Tuple[int, int, int, int] = (255, 255, 255, 255),
+    anti_alias_output: bool = True,
+    progress: Optional[Callable[[int, str], None]] = None,
+    mute_printouts: bool = False,
+) -> Image.Image:
+    
+    if progress:
+        try:
+            progress(5, "Starting sketch generation")
+        except Exception as e:
+            if not mute_printouts:
+                print(f"Progress callback error during initialization: {e}")
+    
+
+    output_img = _sketch_generator_core(
+        input_image=input_image,
+        max_count=max_count,
+        sub_step=sub_step,
+        perception=perception,
+        drop_alpha=drop_alpha,
+        draw_alpha=draw_alpha,
+        draw_weight=draw_weight,
+        max_speed=max_speed,
+        noise_scale=noise_scale,
+        noise_influence=noise_influence,
+        drop_rate=drop_rate,
+        canvas_color=canvas_color,
+        anti_alias_output=anti_alias_output,
+        progress=progress,
+        mute_printouts=mute_printouts
+    )
+
+    width, height = input_image.size
+    
+    if anti_alias_output:
+        # Downsample the high resolution layout back to standard size
+        output_img = output_img.resize((width, height), Image.Resampling.LANCZOS)
+
+    if progress:
+        try:
+            progress(100, "Finished")
+        except Exception as e:
+            if not mute_printouts:
+                print(f"Progress callback error during finalization: {e}")
+
+    return output_img.convert("RGB")
+
+def _sketch_generator_core(
+    input_image: Image.Image, 
+    max_count: int = 100,
+    sub_step: int = 800,
+    perception: int = 5,
+    drop_alpha: int = 120,
+    draw_alpha: int = 40,
+    draw_weight: int = 1,
+    max_speed: float = 3.0,
+    noise_scale: float = 100.0,
+    noise_influence: float = 0.05,
+    drop_rate: float = 0.0044,
+    canvas_color: Tuple[int, int, int, int] = (255, 255, 255, 255),
+    anti_alias_output: bool = True,
+    progress: Optional[Callable[[int, str], None]] = None,
+    mute_printouts: bool = False
+) -> Image.Image:
+    """CPU-based Sketch Generator."""
+    def _get_brightness(color):
+            """Calculates the brightness percentage (0-100) of an RGB color."""
+            r, g, b = color[:3]
+            return (0.299 * r + 0.587 * g + 0.114 * b) * (100.0 / 255.0)
+        
+    # 1. Load the input image and match dimensions
+    img = input_image.convert("RGB")
+    width, height = img.size
+    img_pixels = img.load()
+
+    # 2. Fix Anti-Aliasing via Supersampling (Internal Scale Factor)
+    scale = 2 if anti_alias_output else 1
+    canvas_width = width * scale
+    canvas_height = height * scale
+
+    # Adjust drawing properties to match the scaled canvas
+    scaled_draw_weight = draw_weight * scale
+    scaled_perception = perception * scale
+    scaled_max_speed = max_speed * scale
+
+    # Create the output canvas at the high-res scaled dimensions
+    output_img = Image.new("RGBA", (canvas_width, canvas_height), canvas_color)
+    draw = ImageDraw.Draw(output_img)
+
+    # Simulation loop constraints
+    max_draw_cycles = width  
+
+    # State variables (Track positions relative to the high-res canvas)
+    pos_x, pos_y = 0.0, 0.0
+    pre_x, pre_y = 0.0, 0.0
+    vel_x, vel_y = 0.0, 0.0
+    paint_count = 0
+    draw_color = (0, 0, 0)
+
+    def initial():
+        nonlocal pos_x, pos_y, pre_x, pre_y, vel_x, vel_y, paint_count, draw_color
+        paint_count = 0
+
+        # Break the grid: Use raw floating points for coordinate testing
+        while True:
+            rx = random.uniform(0, width - 1)
+            ry = random.uniform(0, height - 1)
+            
+            # Sub-pixel sampling: Bilinear interpolation would be ideal, 
+            # but rounded interpolation breaks organic grid clustering effectively.
+            px, py = int(rx), int(ry)
+            c = img_pixels[px, py]
+            if _get_brightness(c) < 50:
+                # Map source float coordinates seamlessly onto high-res canvas scale
+                pos_x, pos_y = rx * scale, ry * scale
+                break
+
+        draw_color = img_pixels[int(rx), int(ry)]
+        pre_x, pre_y = pos_x, pos_y
+        vel_x, vel_y = 0.0, 0.0
+
+    def fade_line_from_img(x1, y1, x2, y2):
+        # Convert high-res drawing canvas back to source dimensions for modification
+        src_x1, src_y1 = x1 / scale, y1 / scale
+        src_x2, src_y2 = x2 / scale, y2 / scale
+        
+        x_offset = abs(src_x1 - src_x2)
+        y_offset = abs(src_y1 - src_y2)
+        step = max(1, math.floor(max(x_offset, y_offset)))
+
+        for i in range(step):
+            x = math.floor(src_x1 + (src_x2 - src_x1) * i / step)
+            y = math.floor(src_y1 + (src_y2 - src_y1) * i / step)
+
+            if 0 <= x < width and 0 <= y < height:
+                origin_color = img_pixels[x, y]
+                r = min(origin_color[0] + 25, 255)
+                g = min(origin_color[1] + 25, 255)
+                b = min(origin_color[2] + 25, 255)
+                img_pixels[x, y] = (r, g, b)
+
+    # Initialize the first path placement
+    initial()
+
+    # 4. Main Generation Loop
+    for cycle in range(max_draw_cycles):
+        
+        if progress and cycle % max(1, max_draw_cycles // 50) == 0:
+            try:
+                pct = int((cycle / max_draw_cycles) * 100)
+                progress(pct, f"Generating sketch traces: cycle {cycle}/{max_draw_cycles}")
+            except Exception as e:
+                if not mute_printouts:
+                    print(f"Progress callback error during sketch generation: {e}")
+
+        for _ in range(sub_step):
+            pre_x, pre_y = pos_x, pos_y
+            force_x, force_y = 0.0, 0.0
+            count = 0
+
+            # Scanning the perception radius (Calculated relative to current Canvas coordinates)
+            half_p = math.floor(scaled_perception / 2)
+            for i in range(-half_p, half_p + 1):
+                for j in range(-half_p, half_p + 1):
+                    if i == 0 and j == 0:
+                        continue
+
+                    # Reference back to source coordinates for brightness mapping
+                    src_x = math.floor((pos_x + i) / scale)
+                    src_y = math.floor((pos_y + j) / scale)
+
+                    if 0 <= src_x < width and 0 <= src_y < height:
+                        b = 1.0 - (_get_brightness(img_pixels[src_x, src_y]) / 100.0)
+                        p_mag = math.sqrt(i * i + j * j)
+                        if p_mag > 0:
+                            force_x += (i / p_mag) * b / p_mag
+                            force_y += (j / p_mag) * b / p_mag
+                            count += 1
+
+            if count != 0:
+                force_x /= count
+                force_y /= count
+
+            # Noise fields evaluated over high-resolution dimensions to widen variance
+            n = (math.sin(pos_x / (noise_scale * scale)) + math.cos(pos_y / (noise_scale * scale))) * (
+                cycle * 0.01
+            )
+            n_mapped = (n + 2) * (scaled_perception * math.pi)
+            noise_x = math.cos(n_mapped)
+            noise_y = math.sin(n_mapped)
+
+            force_mag = math.sqrt(force_x * force_x + force_y * force_y)
+            if force_mag < 0.01:
+                force_x += noise_x * (noise_influence * scaled_perception)
+                force_y += noise_y * (noise_influence * scaled_perception)
+            else:
+                force_x += noise_x * noise_influence
+                force_y += noise_y * noise_influence
+
+            # Update velocity
+            vel_x += force_x
+            vel_y += force_y
+
+            # Limit scaled line speed
+            vel_mag = math.sqrt(vel_x * vel_x + vel_y * vel_y)
+            if vel_mag > scaled_max_speed:
+                vel_x = (vel_x / vel_mag) * scaled_max_speed
+                vel_y = (vel_y / vel_mag) * scaled_max_speed
+
+            # Apply movements
+            pos_x += vel_x
+            pos_y += vel_y
+
+            # Update lifecycle checks against Canvas borders
+            paint_count += 1
+            if (
+                paint_count > max_count
+                or pos_x >= canvas_width
+                or pos_x < 0
+                or pos_y >= canvas_height
+                or pos_y < 0
+            ):
+                initial()
+
+            # Determine line formatting
+            current_force_mag = math.sqrt(force_x * force_x + force_y * force_y)
+            if current_force_mag > 0.1 and random.random() < drop_rate:
+                alpha = drop_alpha
+                weight = int(scaled_draw_weight + random.uniform(0, scaled_perception))
+            else:
+                alpha = draw_alpha
+                weight = int(scaled_draw_weight)
+
+            line_color = (draw_color[0], draw_color[1], draw_color[2], alpha)
+
+            # Draw step segment line
+            draw.line(
+                [(pre_x, pre_y), (pos_x, pos_y)], fill=line_color, width=weight
+            )
+
+            # Apply canvas color fading logic
+            fade_line_from_img(pre_x, pre_y, pos_x, pos_y)
+    return output_img.convert("RGB")

@@ -467,6 +467,92 @@ class LuminanceMaskNode(ProcessorNode):
 
         self.outputs["mask"]._cache = mask
 
+class SplitChannelsNode(ProcessorNode):
+    def __init__(self):
+        super().__init__()
+        self.display_name = "Split Channels"
+        self.category = "Image Effects"
+        self.description = "Splits the input image into its individual color channels (R, G, B), (Luminance, Brightness), (Alpha)."
+        self.tooltips_in = {
+            "image": "Input image to be split into channels."
+        }
+        self.tooltips_out = {
+            "R": "Red channel of the input image.",
+            "G": "Green channel of the input image.",
+            "B": "Blue channel of the input image.",
+            "lum": "Luminance channel of the input image.",
+            "br": "Brightness channel of the input image.",
+            "aph": "Alpha channel of the input image."
+        }
+        
+        self.inputs["image"] = InputSocket(
+            self, "image", SocketType.PIL_IMG
+        )
+
+        self.outputs["R"] = OutputSocket(
+            self, "R", SocketType.PIL_IMG
+        )
+        self.outputs["G"] = OutputSocket(
+            self, "G", SocketType.PIL_IMG
+        )
+        self.outputs["B"] = OutputSocket(
+            self, "B", SocketType.PIL_IMG
+        )
+        self.outputs["lum"] = OutputSocket(
+            self, "lum", SocketType.PIL_IMG_MONOCH
+        )
+        self.outputs["br"] = OutputSocket(
+            self, "br", SocketType.PIL_IMG_MONOCH
+        )
+        self.outputs["aph"] = OutputSocket(
+            self, "aph", SocketType.PIL_IMG_MONOCH
+        )
+        
+        
+    def compute(self):
+        img = self.inputs["image"].get()
+        if img is None:
+            self.outputs["R"]._cache = None
+            self.outputs["G"]._cache = None
+            self.outputs["B"]._cache = None
+            self.outputs["lum"]._cache = None
+            self.outputs["br"]._cache = None
+            self.outputs["aph"]._cache = None
+            return
+
+        try:
+            print(f"SplitChannelsNode: computing channel split")
+            # check if anything is connected to the advanced outputs before calling advanced split
+            if (self.outputs["lum"].is_connected() or self.outputs["br"].is_connected() or self.outputs["aph"].is_connected()):
+                print(f"SplitChannelsNode: advanced channel split requested")
+                imgs =passes.split_channels(img, use_additional_channels=True)
+                l = imgs.get("lum", Image.new("L", img.size, 0))
+                br = imgs.get("br", Image.new("L", img.size, 0))
+                aph = imgs.get("aph", Image.new("L", img.size, 0))
+            else:
+                print(f"SplitChannelsNode: basic channel split requested")
+                imgs = passes.split_channels(img, use_additional_channels=False)
+                l = Image.new("L", img.size, 0)
+                br = Image.new("L", img.size, 0)
+                aph = Image.new("L", img.size, 0)
+            
+            r = imgs.get("R", Image.new("L", img.size, 0))
+            g = imgs.get("G", Image.new("L", img.size, 0))
+            b = imgs.get("B", Image.new("L", img.size, 0))
+        except Exception as e:
+            import traceback
+            print(f"SplitChannelsNode: Channel split failed ({e}), using blank channels.")
+            traceback.print_exc()
+            l = br = aph = Image.new("L", img.size, 0)
+            r = g = b = Image.new("L", img.size, 0)
+
+        self.outputs["R"]._cache = r
+        self.outputs["G"]._cache = g
+        self.outputs["B"]._cache = b
+        self.outputs["lum"]._cache = l
+        self.outputs["br"]._cache = br
+        self.outputs["aph"]._cache = aph
+
 class NoiseNode(ProcessorNode):
     def __init__(self):
         super().__init__()
@@ -973,6 +1059,131 @@ class SortPixelsNode(ProcessorNode):
             img = inp_img
         self.outputs["image"]._cache = img
 
+class ParticleDrawNode(ProcessorNode):
+    def __init__(self):
+        super().__init__()
+        self.display_name = "Particle Draw"
+        self.category = "Generative Nodes"
+        self.description = "Simulates particle movement over the input image to create a dynamic drawing effect."
+        self.progress = 0
+        self.tooltips_in = {
+            "image": "Input PIL image to guide particle movement.",
+            "line count": "Maximum number of steps each particle path can take before resetting. Default is 100.",
+            "draw cycles": "Total number of internal drawing step iterations per loop cycle. Default is 800.",
+            "particle view radius": "Radius size within which particles look for dark target spots. Default is 5.",
+            "drop_alpha": "Alpha visibility value (0-255) for dropped decorative accent spots. Default is 120.",
+            "draw_alpha": "Alpha opacity value (0-255) for regular drawing stroke lines. Default is 50.",
+            "stroke width": "Base stroke width thickness for structural sketch lines. Default is 1.",
+            "max_speed": "Maximum allowed speed velocity cap for the tracing particles. Default is 3.0.",
+            "noise_scale": "Scale grid distribution factor of the flow field noise patterns. Default is 100.0.",
+            "noise_influence": "Influence weight multiplier of the noise field on direction. Default is 0.05.",
+            "drop_rate": "Statistical probability chance rate at which splash accents drop. Default is 0.0044.",
+            "canvas_color": "Background canvas color for the output image. Default is white (255, 255, 255, 255, 255)."
+        }
+        self.tooltips_out = {
+            "image": "Output PIL image with particle drawing effect."
+        }
+        
+        self.inputs["image"] = InputSocket(
+            self, "image", SocketType.PIL_IMG
+        )
+        
+        self.inputs["line count"] = InputSocket(
+            self, "line count", SocketType.INT
+        )
+        
+        self.inputs["draw cycles"] = InputSocket(
+            self, "draw cycles", SocketType.INT
+        )
+        
+        self.inputs["particle view radius"] = InputSocket(
+            self, "particle view radius", SocketType.INT
+        )
+
+        self.inputs["drop_alpha"] = InputSocket(
+            self, "drop_alpha", SocketType.INT
+        )
+
+        self.inputs["draw_alpha"] = InputSocket(
+            self, "draw_alpha", SocketType.INT
+        )
+
+        self.inputs["stroke width"] = InputSocket(
+            self, "stroke width", SocketType.INT
+        )
+
+        self.inputs["max_speed"] = InputSocket(
+            self, "max_speed", SocketType.FLOAT
+        )
+
+        self.inputs["noise_scale"] = InputSocket(
+            self, "noise_scale", SocketType.FLOAT
+        )
+
+        self.inputs["noise_influence"] = InputSocket(
+            self, "noise_influence", SocketType.FLOAT
+        )
+
+        self.inputs["drop_rate"] = InputSocket(
+            self, "drop_rate", SocketType.FLOAT
+        )
+        
+        self.inputs["canvas_color"] = InputSocket(
+            self, "canvas_color", SocketType.COLOR
+        )
+        
+        self.outputs["image"] = OutputSocket(
+            self, "image", SocketType.PIL_IMG
+        )
+        
+    def compute(self):
+        img = self.inputs["image"].get()
+        if img is None:
+            self.outputs["image"]._cache = None
+            return
+
+        try:
+            print(f"[ParticleDrawNode]: computing particle draw effect")
+            
+            # Extract inputs with fallbacks to defaults from your parameters
+            max_count = self.inputs["line count"].get() if self.inputs["line count"].get() is not None else 100
+            sub_step = self.inputs["draw cycles"].get() if self.inputs["draw cycles"].get() is not None else 800
+            perception = self.inputs["particle view radius"].get() if self.inputs["particle view radius"].get() is not None else 5
+            drop_alpha = self.inputs["drop_alpha"].get() if self.inputs["drop_alpha"].get() is not None else 120
+            draw_alpha = self.inputs["draw_alpha"].get() if self.inputs["draw_alpha"].get() is not None else 40
+            draw_weight = self.inputs["stroke width"].get() if self.inputs["stroke width"].get() is not None else 1
+            max_speed = self.inputs["max_speed"].get() if self.inputs["max_speed"].get() is not None else 3.0
+            noise_scale = self.inputs["noise_scale"].get() if self.inputs["noise_scale"].get() is not None else 100.0
+            noise_influence = self.inputs["noise_influence"].get() if self.inputs["noise_influence"].get() is not None else 0.05
+            drop_rate = self.inputs["drop_rate"].get() if self.inputs["drop_rate"].get() is not None else 0.0044
+            canvas_color = self.inputs["canvas_color"].get() if self.inputs["canvas_color"].get() is not None else (255, 255, 255, 255)
+
+            # Assuming passes.sketch_generator works directly with PIL images or paths.
+            # If your generator saves directly to file path instead of returning an image object, 
+            # ensure your backend function handles the PIL input-to-output pipeline appropriately.
+            particle_drawn_img = passes.sketch_generator(
+                input_image=img,
+                max_count=max_count,
+                sub_step=sub_step,
+                perception=perception,
+                drop_alpha=drop_alpha,
+                draw_alpha=draw_alpha,
+                draw_weight=draw_weight,
+                max_speed=max_speed,
+                noise_scale=noise_scale,
+                noise_influence=noise_influence,
+                drop_rate=drop_rate,
+                progress=lambda pct, msg: setattr(self, 'progress', pct)
+            )
+        except Exception as e:
+            import traceback
+            print(f"[ParticleDrawNode]: Particle drawing failed ({e}), using original image.")
+            traceback.print_exc()
+            particle_drawn_img = img
+
+        self.outputs["image"]._cache = particle_drawn_img
+
+
 # Input Nodes
 
 class ValueIntNode(InputNode):
@@ -1237,6 +1448,11 @@ class GetImageDataNode(ProcessorNode):
                 self,
                 "info", SocketType.STRING
             )
+
+            self.outputs["primary_color"] = OutputSocket(
+                self,
+                "primary_color", SocketType.COLOR
+            )
         except Exception as e:
             print(f"GetImageDataNode: Initialization failed ({e}).")
 
@@ -1250,6 +1466,7 @@ class GetImageDataNode(ProcessorNode):
             self.outputs["mode"]._cache = None
             self.outputs["format"]._cache = None
             self.outputs["info"]._cache = None
+            self.outputs["primary_color"]._cache = None
             print("GetImageDataNode: No input image.")
             return
         try:
@@ -1259,6 +1476,7 @@ class GetImageDataNode(ProcessorNode):
             self.outputs["mode"]._cache = data["mode"]
             self.outputs["format"]._cache = data["format"]
             self.outputs["info"]._cache = data["info"]
+            self.outputs["primary_color"]._cache = data["primary_color"]
         except Exception as e:
             print(f"GetImageDataNode: Failed to get image data ({e}).")
             self.outputs["width"]._cache = None
@@ -1266,7 +1484,8 @@ class GetImageDataNode(ProcessorNode):
             self.outputs["mode"]._cache = None
             self.outputs["format"]._cache = None
             self.outputs["info"]._cache = None
-    
+            self.outputs["primary_color"]._cache = None
+
 class ViewerNode(OutputNode):
     def __init__(self):
         super().__init__()

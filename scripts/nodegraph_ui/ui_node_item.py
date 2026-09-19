@@ -2,7 +2,7 @@
 __all__ = ["NodeItemInput", "NodeItemProcessor", "NodeItemOutput"]
 import io
 from PyQt5.QtWidgets import (
-    QGraphicsRectItem, QGraphicsTextItem, QGraphicsProxyWidget,
+    QGraphicsRectItem, QGraphicsTextItem, QGraphicsProxyWidget, QListView,
     QPushButton, QSpinBox, QDoubleSpinBox, QLineEdit, QCheckBox,
     QMainWindow, QLabel, QApplication, QGraphicsItem, QGraphicsPixmapItem, QComboBox, QGraphicsProxyWidget,
     QWidget, QDialog, QVBoxLayout, QScrollArea, QColorDialog
@@ -410,7 +410,26 @@ class NodeItemInput(QGraphicsRectItem):
             self._create_outputs()
         # Special UI for SourceImageNode (dropdown for images)
         if isinstance(self.node, SourceImageNode):
-            combo = QComboBox()
+            class OverlayComboBox(QComboBox):
+                def showPopup(self):
+                    parent_item = self.graphicsProxyWidget().parentItem()
+                    if parent_item is not None:
+                        parent_item.setZValue(1000)
+                    super().showPopup()
+
+                def hidePopup(self):
+                    super().hidePopup()
+                    parent_item = self.graphicsProxyWidget().parentItem()
+                    if parent_item is not None:
+                        parent_item.setZValue(0)
+            
+            combo = OverlayComboBox()
+            combo.setToolTip("Select an image to load")
+            combo.setView(QListView())
+            combo.setMaxVisibleItems(10)
+            combo.view().setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+            
+            
             combo.addItems(getattr(self.node, '_image_files', []))
 
             # Set the initial index without triggering the change handler.

@@ -12,6 +12,21 @@ from scripts import passes
 
 
 class TestPasses(ImageTestCase):
+    def test_primary_color_uses_tolerance(self):
+        img = Image.new('RGB', (8, 1))
+        colors = [
+            (100, 100, 100), (100, 100, 100), (100, 100, 100),
+            (102, 101, 99), (101, 99, 102),
+            (200, 0, 0), (200, 0, 0), (200, 0, 0),
+        ]
+        for x, color in enumerate(colors):
+            img.putpixel((x, 0), color)
+
+        self.assertEqual(passes._getPrimaryColor(img, tolerance=3), (100, 100, 100))
+        self.assertEqual(passes._getPrimaryColor(img, tolerance=0), (200, 0, 0))
+        with self.assertRaises(ValueError):
+            passes._getPrimaryColor(img, tolerance=-1)
+
     def test_ensure_rgba_conversions(self):
         rgb = Image.new('RGB', (2, 2), (10, 20, 30))
         rgba = passes._ensure_rgba(rgb)
