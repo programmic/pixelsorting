@@ -68,9 +68,6 @@ class BlurNode(ProcessorNode):
         if blur_type is None:
             blur_type = "Gaussian"
         if kernel is None:
-            try:
-                kernel = 3
-            except Exception:
                 kernel = 3
 
         # If required image input is missing, ensure output cache is cleared
@@ -81,6 +78,7 @@ class BlurNode(ProcessorNode):
         blurred = None
         try:
             if not self.silent: print(f"[BlurNode]: computing blur with type={blur_type} kernel={kernel}")
+            self.progress = 0
             blurred = passes.blur(img, blur_type, int(kernel), progress=lambda pct, msg: setattr(self, 'progress', pct))
         except Exception as e:
             # Primary blur failed (possibly GPU/OpenCL). Try CPU fallbacks.
@@ -315,6 +313,7 @@ class RescaleNode(ProcessorNode):
             self._last_allow_upscale == current_allow_upscale):
             return
 
+        self.progress = 0
         try:
             print(f"RescaleNode: computing rescale to resolution={resolution}")
             reduced = passes.reduce_size(img, resolution=resolution, upscale=current_allow_upscale, progress=lambda pct, msg: setattr(self, 'progress', pct))
@@ -348,13 +347,13 @@ class ContrastMaskNode(ProcessorNode):
         super().__init__()
         self.category = "Mask Nodes"
         self.display_name = "Contrast Mask"
+        self.progress = 0
         self.description = "Generates a contrast mask from the input image based on specified minimum and maximum contrast limits."
         self.tooltips_in = {
             "image": "Input image to generate contrast mask from.",
             "limMin": "Minimum contrast limit.",
             "limMax": "Maximum contrast limit."
         }
-        self.progress = 0
         self.inputs["image"] = InputSocket(
             self, "image", SocketType.PIL_IMG
         )
@@ -668,6 +667,7 @@ class MixNode(ProcessorNode):
         self.tooltips_in = {
             "imageA": "First input image for mixing.",
             "imageB": "Second input image for mixing.",
+            "mixMode": "Mode of mixing. [BLEND | multiply | add | subtract]",
             "mixMask": "Mask to control where the mix is applied.",
         }
         self.tooltips_out = {
@@ -681,6 +681,10 @@ class MixNode(ProcessorNode):
         self.inputs["imageB"] = InputSocket(
             self, "imageB", SocketType.PIL_IMG
         )
+        
+        self.inputs["mixMode"] = InputSocket(
+            self, "mixMode", SocketType.STRING
+        )
 
         self.inputs["mixMask"] = InputSocket(
             self, "mixMask", SocketType.PIL_IMG_MONOCH
@@ -690,11 +694,12 @@ class MixNode(ProcessorNode):
             self, "image", SocketType.PIL_IMG
         )
         # simple input-id cache to avoid recomputing when inputs unchanged
-        self._last_mix_inputs = (None, None, None)
+        self._last_mix_inputs = (None, None, None, None)
     
     def compute(self):
         imgA = self.inputs["imageA"].get()
         imgB = self.inputs["imageB"].get()
+        mix_mode = self.inputs["mixMode"].get()
         mix_mask = self.inputs["mixMask"].get()
         if imgA is None or imgB is None:
             self.outputs["image"]._cache = None
@@ -702,7 +707,7 @@ class MixNode(ProcessorNode):
         if mix_mask is None:
             mix_mask = Image.new("L", imgA.size, 128)  # default to 50% mix if no mask provided
         # avoid recompute if inputs haven't changed (use id() as a lightweight fingerprint)
-        current_ids = (id(imgA), id(imgB), id(mix_mask))
+        current_ids = (id(imgA), id(imgB), id(mix_mode), id(mix_mask))
         if current_ids == self._last_mix_inputs and self.outputs["image"]._cache is not None:
             return
 
@@ -711,6 +716,7 @@ class MixNode(ProcessorNode):
             mixed = passes.maskMerge(
                 imgA,
                 imgB,
+                mode=mix_mode,
                 mask=mix_mask,
                 progress=lambda pct, msg: setattr(self, 'progress', pct)
                 )
@@ -918,6 +924,10 @@ class OutlineNode(ProcessorNode):
         self.inputs["image"] = InputSocket(
             self, "image", SocketType.PIL_IMG
         )
+        
+        self.inputs["method"] = InputSocket(
+            self, "method", SocketType.STRING
+        )
 
         self.inputs["threshold"] = InputSocket(
             self, "threshold", SocketType.FLOAT
@@ -942,10 +952,16 @@ class OutlineNode(ProcessorNode):
         if img is None:
             self.outputs["image"]._cache = None
             return
+        
         if limLower is None:
-            limLower = 0.1
+            limLower = 30.0   # Clear low threshold out of 255
+        elif limLower <= 1.0:
+            limLower = limLower * 255.0
+
         if limUpper is None:
-            limUpper = 0.3
+            limUpper = 90.0   # Clear high threshold out of 255
+        elif limUpper <= 1.0:
+            limUpper = limUpper * 255.0
 
         try:
             print(f"[OutlineNode]: computing outline image")
@@ -955,6 +971,7 @@ class OutlineNode(ProcessorNode):
                 method = "Sobel"
             if threshold is None:
                 threshold = 0.1
+                
             outlined = passes.find_edges(
                 img,
                 low_threshold=limLower,
@@ -963,9 +980,7 @@ class OutlineNode(ProcessorNode):
                 threshold=threshold
                 )
         except Exception as e:
-            import traceback
             print(f"[OutlineNode]: Outline computation failed ({e}), using original image.")
-            traceback.print_exc()
             outlined = img
 
         self.outputs["image"]._cache = outlined
@@ -1183,6 +1198,105 @@ class ParticleDrawNode(ProcessorNode):
 
         self.outputs["image"]._cache = particle_drawn_img
 
+class CircularAutomataNode(ProcessorNode):
+    def __init__(self):
+        super().__init__()
+        self.display_name = "Circular Automata"
+        self.category = "Generative Nodes"
+        self.description = "Perform circular automata generation based on the input image and parameters."
+        self.progress = 0
+
+        self.tooltips_in = {
+            "image": "Input image to guide the circular automata generation.",
+            "threshold": "Threshold value for the automata (0.0 to 1.0).",
+            "n": "Number of neighbors to consider for the automata rules. Overrides the threshold count if specified.",
+            "iterations": "Number of iterations to perform for the automata.",
+            "color mode": "Color mode to use for the automata.",
+        }
+        self.tooltips_out = {
+            "image": "Output image after circular automata processing."
+        }
+        
+        self.inputs["image"] = InputSocket(
+            self, "image", SocketType.PIL_IMG
+        )
+        
+        self.inputs["threshold"] = InputSocket(
+            self, "threshold", SocketType.FLOAT
+        )
+        
+        self.inputs["n"] = InputSocket(
+            self, "n", SocketType.INT
+        )
+        
+        self.inputs["iterations"] = InputSocket(
+            self, "iterations", SocketType.INT
+        )
+        
+        self.inputs["color mode"] = InputSocket(
+            self, "color mode", SocketType.STRING
+        )
+        
+        self.outputs["image"] = OutputSocket(
+            self, "image", SocketType.PIL_IMG
+        )
+        
+        self._last_inputs = (None, None, None, None)  # To track changes in inputs for caching
+        self._last_output = None  # To store the last computed output image
+        
+    def compute(self):
+        img = self.inputs["image"].get()
+        threshold = self.inputs["threshold"].get()
+        iterations = self.inputs["iterations"].get()
+        n = self.inputs["n"].get()
+        color_mode = self.inputs["color mode"].get()
+
+        if img is None:
+            self.outputs["image"]._cache = None
+            return
+
+        # Setze Standardwerte, falls Eingaben im GUI leer sind
+        if threshold is None:
+            threshold = 0.125
+        if iterations is None:
+            iterations = 10
+        if color_mode is None:
+            color_mode = "hue"
+
+        # Typenabsicherung für n (Sicherstellen, dass es ein Int oder None ist)
+        if n is not None:
+            try:
+                n = int(float(n))
+            except (ValueError, TypeError):
+                n = None
+
+        # KORREKTUR: 'n' MUSS in das current_inputs-Tupel für den Cache-Vergleich!
+        current_inputs = (id(img), threshold, iterations, color_mode, n)
+        
+        # Falls sich kein Parameter geändert hat, nutze den Cache
+        if current_inputs == self._last_inputs and self._last_output is not None:
+            self.outputs["image"]._cache = self._last_output
+            return
+
+        try:
+            print(f"[CircularAutomataNode]: computing circular automata with threshold={threshold}, n={n}, iterations={iterations}, color_mode={color_mode}")
+            output_img = passes.cyclic_cellular_automata(
+                img,
+                threshold=threshold,
+                iterations=iterations,
+                value=color_mode,
+                n=n,
+                progress=lambda pct, msg: setattr(self, 'progress', pct)
+            )
+        except Exception as e:
+            import traceback
+            print(f"[CircularAutomataNode]: Circular automata computation failed ({e}), using original image.")
+            traceback.print_exc()
+            output_img = img
+
+        self.outputs["image"]._cache = output_img
+        self._last_inputs = current_inputs
+        self._last_output = output_img
 
 # Input Nodes
 

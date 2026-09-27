@@ -14,9 +14,11 @@ from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from math import exp, pi
 
 import colorsys
+from unittest import case
 import numpy as np
 import pyopencl as cl
 from PIL import Image, ImageDraw
+from superqt import switch
 from tqdm import tqdm
 from enum import Enum
 
@@ -739,7 +741,6 @@ def blur_box_gpu(img: Image.Image, blur_kernel: int) -> Image.Image: #globaligno
         except Exception:
             return out
 
-@timing
 def blur_gaussian(
     img: Image.Image,
     kernel: int,
@@ -748,23 +749,28 @@ def blur_gaussian(
     progress: Optional[callable] = None
     ) -> Image.Image: #globalignore
     """Optimized Gaussian blur using separable convolution with NumPy."""
-    # Convert to numpy array for faster processing
     img_rgba = _ensure_rgba(img)
     img_array = np.array(img_rgba, dtype=np.float32)
     height, width, channels = img_array.shape
     
-    # Generate 1D Gaussian kernel
     kernel_size = 2 * kernel + 1
     x = np.arange(-kernel, kernel + 1)
     gaussian_1d = np.exp(-x**2 / (2 * sigma**2))
     gaussian_1d /= gaussian_1d.sum()
     
+    last_pct = -1
+
     # Apply horizontal convolution
     temp = np.zeros_like(img_array)
     for c in range(channels):
         for y in range(height):
+            if progress:
+                pct = int((y / height) * 50)
+                if pct != last_pct:
+                    progress(pct, f"Applying horizontal blur: {pct}%")
+                    last_pct = pct
+
             for x in range(width):
-                if progress: progress(int((y / height) * 50), f"Applying horizontal blur: {int((y / height) * 50)}%")
                 x_min = max(x - kernel, 0)
                 x_max = min(x + kernel + 1, width)
                 kernel_start = max(kernel - x, 0)
@@ -779,7 +785,13 @@ def blur_gaussian(
     for c in range(channels):
         for x in range(width):
             for y in range(height):
-                if progress: progress(int((y / height) * 50) + 50, f"Applying vertical blur: {int((y / height) * 50) + 50}%")
+                # FIXED: Moved from inner loop to row loop & added a throttle check
+                if progress:
+                    pct = int((y / height) * 50) + 50
+                    if pct != last_pct:
+                        progress(pct, f"Applying vertical blur: {pct}%")
+                        last_pct = pct
+
                 y_min = max(y - kernel, 0)
                 y_max = min(y + kernel + 1, height)
                 kernel_start = max(kernel - y, 0)
@@ -789,7 +801,6 @@ def blur_gaussian(
                 kernel_slice = gaussian_1d[kernel_start:kernel_end]
                 output_array[y, x, c] = np.sum(window * kernel_slice)
     
-    # Convert back to PIL Image, preserve original mode when possible
     output_array = np.clip(output_array, 0, 255).astype(np.uint8)
     if progress: progress(100, "Gaussian blur complete")
     out = Image.fromarray(output_array, 'RGBA')
@@ -797,8 +808,8 @@ def blur_gaussian(
         return out.convert(img.mode)
     except Exception:
         return out
-
 @timing
+
 def blur_gaussian_fast(
     img: Image.Image,
     kernel: int,
@@ -806,29 +817,33 @@ def blur_gaussian_fast(
     silent: bool = False, 
     progress: Optional[callable] = None
     ) -> Image.Image: #globalignore
-
     """Highly optimized Gaussian blur using vectorized NumPy operations."""
     if progress: progress(0, "Preparing for Gaussian blur")
     img_rgba = _ensure_rgba(img)
     img_array = np.array(img_rgba, dtype=np.float32)
     
-    # Generate 1D Gaussian kernel
     if progress: progress(10, "Generating Gaussian kernel")
     kernel_size = 2 * kernel + 1
     x = np.arange(-kernel, kernel + 1)
     gaussian_1d = np.exp(-x**2 / (2 * sigma**2))
     gaussian_1d /= gaussian_1d.sum()
     
-    # Pad image for convolution
     pad_width = kernel
     padded = np.pad(img_array, ((pad_width, pad_width), (pad_width, pad_width), (0, 0)), mode='reflect')
     
+    last_pct = -1
+
     # Apply horizontal convolution
     temp = np.zeros_like(padded)
     if progress: progress(20, "Applying horizontal convolution")
     for y in range(padded.shape[0]):
+        if progress: 
+            pct = int((y / padded.shape[0]) * 30) + 20
+            if pct != last_pct:
+                progress(pct, f"Applying horizontal convolution: {pct}%")
+                last_pct = pct
+
         for x in range(pad_width, padded.shape[1] - pad_width):
-            if progress: progress(int((y / padded.shape[0]) * 30) + 20, f"Applying horizontal convolution: {int((y / padded.shape[0]) * 30) + 20}%")
             window = padded[y, x - pad_width:x + pad_width + 1, :]
             temp[y, x, :] = np.sum(window * gaussian_1d[:, np.newaxis], axis=0)
     
@@ -836,11 +851,16 @@ def blur_gaussian_fast(
     output_padded = np.zeros_like(padded)
     for x in range(pad_width, padded.shape[1] - pad_width):
         for y in range(pad_width, padded.shape[0] - pad_width):
-            if progress: progress(int((y / padded.shape[0]) * 30) + 50, f"Applying vertical convolution: {int((y / padded.shape[0]) * 30) + 50}%")
+            # FIXED: Moved from the inner 'y' loop up to the outer 'x' loop & added a throttle check
+            if progress: 
+                pct = int((y / padded.shape[0]) * 30) + 50
+                if pct != last_pct:
+                    progress(pct, f"Applying vertical convolution: {pct}%")
+                    last_pct = pct
+
             window = temp[y - pad_width:y + pad_width + 1, x, :]
             output_padded[y, x, :] = np.sum(window * gaussian_1d[:, np.newaxis], axis=0)
     
-    # Remove padding and convert back
     if progress: progress(90, "Finalizing output image")
     output_array = output_padded[pad_width:-pad_width, pad_width:-pad_width, :]
     output_array = np.clip(output_array, 0, 255).astype(np.uint8)
@@ -1691,7 +1711,8 @@ def multiply(img: Image.Image, factor: float, allowValueOverflow:bool = False) -
 def maskMerge(
         img1: Image.Image,
         img2: Image.Image,
-        mask: Image.Image,
+        mode: str = "blend",
+        mask: Optional[Image.Image] = None,
         silent: bool = True,
         progress: Optional[callable] = None
         ) -> Image.Image:
@@ -1704,6 +1725,7 @@ def maskMerge(
     Args:
         img1 (Image.Image): Source image 1 (used where mask is bright)
         img2 (Image.Image): Source image 2 (used where mask is dark)
+        mode (str, optional): The blending mode. Defaults to "blend".
         mask (Image.Image): Grayscale mask determining the blend ratio
         silent (bool, optional): If True, suppress warning messages. Defaults to True.
         progress (Optional[callable], optional): A callable to report progress. Defaults to None.
@@ -1715,6 +1737,15 @@ def maskMerge(
     if img1 is None or img2 is None or mask is None:
         print("[maskMerge] Warning: One or more inputs are None. Returning img1 as fallback.")
         return img1 if img1 is not None else None
+    
+    # ensure mask is in grayscale mode
+    if mask.mode != "L":
+        mask = mask.convert("L")
+    # likewise, ensure img1 and img2 are in RGB mode for consistent processing
+    if img1.mode != "RGB":
+        img1 = img1.convert("RGB")
+    if img2.mode != "RGB":
+        img2 = img2.convert("RGB")
     
     if img1.size != img2.size or img1.size != mask.size:
         print("[maskMerge] Warning: Image size mismatch. Resizing all inputs to match img1.")
@@ -1745,10 +1776,59 @@ def maskMerge(
             # an int. Use it directly to compute the interpolation weight.
             mv = mask.getpixel((x, y))
             mask_value = (mv[0] / 255.0) if isinstance(mv, tuple) else (mv / 255.0)
+            
+            def _blend_pixel(p1, p2, weight):
+                """Blend two RGB pixels based on a weight (0.0 to 1.0)."""
+                return (
+                    int(p1[0] * weight + p2[0] * (1 - weight)),
+                    int(p1[1] * weight + p2[1] * (1 - weight)),
+                    int(p1[2] * weight + p2[2] * (1 - weight))
+                )
+            
+            def _add_pixel(p1, p2):
+                """Add two RGB pixels."""
+                return (
+                    min(255, p1[0] + p2[0]),
+                    min(255, p1[1] + p2[1]),
+                    min(255, p1[2] + p2[2])
+                )
+            
+            def _subtract_pixel(p1, p2):
+                """Subtract two RGB pixels."""
+                return (
+                    max(0, p1[0] - p2[0]),
+                    max(0, p1[1] - p2[1]),
+                    max(0, p1[2] - p2[2])
+                )
+            
+            def _multiply_pixel(p1, p2):
+                """Multiply two RGB pixels."""
+                return (
+                    min(255, int(p1[0] * p2[0] / 255)),
+                    min(255, int(p1[1] * p2[1] / 255)),
+                    min(255, int(p1[2] * p2[2] / 255))
+                )
+            
+            def _blend_mode(p1, p2, weight, mode):
+                """Blend two pixels based on the specified mode."""
+                if mode == "blend":
+                    return _blend_pixel(p1, p2, weight)
+                elif mode == "add":
+                    return _add_pixel(p1, p2)
+                elif mode == "subtract":
+                    return _subtract_pixel(p1, p2)
+                elif mode == "multiply":
+                    return _multiply_pixel(p1, p2)
+                else:
+                    raise ValueError(f"Unsupported blend mode: {mode}")
 
-            new_r = int(pixel1[0] * mask_value + pixel2[0] * (1 - mask_value))
-            new_g = int(pixel1[1] * mask_value + pixel2[1] * (1 - mask_value))
-            new_b = int(pixel1[2] * mask_value + pixel2[2] * (1 - mask_value))
+            try:
+                new_r = max(0, min(255, int(_blend_mode(pixel1, pixel2, mask_value, mode)[0])))
+                new_g = max(0, min(255, int(_blend_mode(pixel1, pixel2, mask_value, mode)[1])))
+                new_b = max(0, min(255, int(_blend_mode(pixel1, pixel2, mask_value, mode)[2])))
+            except Exception as e:
+                print(f"[maskMerge] Error occurred while computing pixel at ({x}, {y}): {e}")
+                continue
 
             out.putpixel((x, y), (new_r, new_g, new_b))
 
@@ -2916,6 +2996,11 @@ def find_edges(
         if low_threshold is None or high_threshold is None:
             low_threshold = threshold * 255.0
             high_threshold = min(255.0, low_threshold * 2.0)
+        
+        if low_threshold <= 1.0 and high_threshold <= 1.0:
+            low_threshold *= 255.0
+            high_threshold *= 255.0
+
         low_t = float(np.clip(low_threshold, 0.0, 255.0))
         high_t = float(np.clip(high_threshold, 0.0, 255.0))
 
@@ -3346,3 +3431,140 @@ def _sketch_generator_core(
             # Apply canvas color fading logic
             fade_line_from_img(pre_x, pre_y, pos_x, pos_y)
     return output_img.convert("RGB")
+
+def cyclic_cellular_automata(
+    img: Image.Image,
+    threshold: float = 0.125,
+    n: Optional[int] = None,
+    iterations: int = 10,
+    progress: Optional[Callable[[int, str], None]] = None,
+    value: str = "hue"
+) -> Image.Image:
+    """
+    Perform cyclic cellular automata on the input image.
+    Args:
+        img (Image.Image): Image to process.
+        threshold (float, optional): Threshold for the automata (ratio of neighbors 0.0 to 1.0). Defaults to 0.125.
+        n (int, optional): Exact number of matching neighbors required to advance a cell. 
+                           Overrides the threshold if provided. Typical values: 1 to 3.
+        iterations (int, optional): Number of iterations to perform. Defaults to 10.
+        value (str, optional): Value to use for the automata. Defaults to "hue".
+        progress (Optional[Callable[[int, str], None]], optional): Progress callback.
+    """
+    if img is None:
+        raise ValueError("Image must be provided")
+
+    img_array = np.array(img.convert("RGB"), dtype=np.float32) / 255.0
+    h, w, c = img_array.shape
+
+    r, g, b = img_array[:,:,0], img_array[:,:,1], img_array[:,:,2]
+    val_type = value.lower()
+    
+    # 1. HSV / Luminanz Konversion vorbereiten
+    max_c = np.max(img_array, axis=2)
+    min_c = np.min(img_array, axis=2)
+    delta = max_c - min_c
+    
+    v_channel = max_c
+    
+    h_channel = np.zeros_like(max_c)
+    idx = (max_c == r) & (delta != 0)
+    h_channel[idx] = ((g[idx] - b[idx]) / delta[idx]) % 6
+    idx = (max_c == g) & (delta != 0)
+    h_channel[idx] = ((b[idx] - r[idx]) / delta[idx]) + 2
+    idx = (max_c == b) & (delta != 0)
+    h_channel[idx] = ((r[idx] - g[idx]) / delta[idx]) + 4
+    h_channel = (h_channel / 6.0) % 1.0
+    
+    s_channel = np.zeros_like(max_c)
+    valid_max = max_c > 0
+    s_channel[valid_max] = delta[valid_max] / max_c[valid_max]
+
+    if val_type in ["hue", "h"]:
+        feature = h_channel
+    elif val_type in ["saturation", "s"]:
+        feature = s_channel
+    elif val_type in ["luminance", "l", "value", "v"]:
+        feature = v_channel
+    else:
+        mapping = {"red": r, "r": r, "green": g, "g": g, "blue": b, "b": b}
+        feature = mapping.get(val_type, r)
+
+    # UNTERSTÜTZUNG FÜR HÖHERE ZUSTÄNDE (Wikipedia empfiehlt meist 14 bis 16 Zustände)
+    num_states = 16 
+    states = np.floor(feature * (num_states - 1)).astype(np.int32)
+    
+    # Bestimmung der Nachbarschaftsschwelle N
+    if n is None:
+        required_neighbors = max(1, int(threshold * 8))
+    else:
+        # Falls n im GUI höher als die maximal möglichen 8 Nachbarn eingestellt wird,
+        # begrenzen wir es hier sinnvoll (Wikipedia-Standard für Griffeath CCA ist N=1 oder N=2)
+        required_neighbors = max(1, min(int(n), 8))
+        if required_neighbors > 4:
+            print(f"[CCA Warning]: n={n} ist zu hoch für eine 8er-Nachbarschaft. Fallback auf n=1")
+            required_neighbors = 1
+
+    # 2. CCA Iterations-Schleife
+    for it in range(iterations):
+        if progress:
+            try: progress(int((it / iterations) * 100), f"Iteration {it+1}/{iterations}")
+            except Exception as e: print(f"Progress error: {e}")
+
+        target_neighbor_state = (states + 1) % num_states
+        neighbor_counts = np.zeros_like(states)
+
+        for di in [-1, 0, 1]:
+            for dj in [-1, 0, 1]:
+                if di == 0 and dj == 0: continue
+                shifted_neighbor = np.roll(np.roll(states, di, axis=0), dj, axis=1)
+                neighbor_counts += (shifted_neighbor == target_neighbor_state)
+
+        change_mask = neighbor_counts >= required_neighbors
+        states[change_mask] = target_neighbor_state[change_mask]
+
+    final_feature = states.astype(np.float32) / (num_states - 1)
+    
+    # 3. Saubere Rückführung in das RGB-Bild
+    if val_type in ["red", "r"]:
+        img_array[:,:,0] = final_feature
+    elif val_type in ["green", "g"]:
+        img_array[:,:,1] = final_feature
+    elif val_type in ["blue", "b"]:
+        img_array[:,:,2] = final_feature
+    else:
+        if val_type in ["hue", "h"]:
+            h_channel = final_feature
+        elif val_type in ["saturation", "s"]:
+            s_channel = final_feature
+        else:
+            v_channel = final_feature
+
+        c_val = v_channel * s_channel
+        x_val = c_val * (1 - np.abs((h_channel * 6.0) % 2 - 1))
+        m_val = v_channel - c_val
+
+        r_new = np.zeros_like(h_channel)
+        g_new = np.zeros_like(h_channel)
+        b_new = np.zeros_like(h_channel)
+
+        h_pos = h_channel * 6.0
+        
+        idx = (0 <= h_pos) & (h_pos < 1)
+        r_new[idx], g_new[idx], b_new[idx] = c_val[idx], x_val[idx], 0
+        idx = (1 <= h_pos) & (h_pos < 2)
+        r_new[idx], g_new[idx], b_new[idx] = x_val[idx], c_val[idx], 0
+        idx = (2 <= h_pos) & (h_pos < 3)
+        r_new[idx], g_new[idx], b_new[idx] = 0, c_val[idx], x_val[idx]
+        idx = (3 <= h_pos) & (h_pos < 4)
+        r_new[idx], g_new[idx], b_new[idx] = 0, x_val[idx], c_val[idx]
+        idx = (4 <= h_pos) & (h_pos < 5)
+        r_new[idx], g_new[idx], b_new[idx] = x_val[idx], 0, c_val[idx]
+        idx = (5 <= h_pos) & (h_pos <= 6)
+        r_new[idx], g_new[idx], b_new[idx] = c_val[idx], 0, x_val[idx]
+
+        img_array[:,:,0] = np.clip(r_new + m_val, 0.0, 1.0)
+        img_array[:,:,1] = np.clip(g_new + m_val, 0.0, 1.0)
+        img_array[:,:,2] = np.clip(b_new + m_val, 0.0, 1.0)
+
+    return Image.fromarray((img_array * 255).astype(np.uint8))

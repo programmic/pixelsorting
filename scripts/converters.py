@@ -20,13 +20,19 @@ def convert(v, mode="lum") -> float:
 
 def get_luminance(v) -> float:
     # L = 0.2126 * R + 0.7152 * G + 0.0722 * B
-    if len(v) == 3:
-        r, g, b = v
-    elif len(v) == 4:
-        r, g, b, _ = v
+    if isinstance(v, (list, tuple)):
+        if len(v) == 3:
+            r, g, b = v
+        elif len(v) == 4:
+            r, g, b, _ = v
+        else:
+            raise ValueError(f"Invalid input for luminance calculation: {v}. Expected a tuple of length 3 or 4 (RGB or RGBA).")
+        return (0.2126 * r + 0.7152 * g + 0.0722 * b)
+    elif isinstance(v, int):
+        # Assuming v is a grayscale value (0-255)
+        return v
     else:
-        raise ValueError(f"Invalid input for luminance calculation: {v}. Expected a tuple of length 3 or 4 (RGB or RGBA).")
-    return (0.2126 * r + 0.7152 * g + 0.0722 * b)
+        raise TypeError(f"Invalid type for luminance calculation: {type(v)}. Expected a list, tuple, or int.")
 
 def get_hue(v) -> int:
     r, g, b = [x / 255.0 for x in v]

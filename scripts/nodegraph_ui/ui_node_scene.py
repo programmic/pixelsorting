@@ -40,13 +40,12 @@ class NodeScene(QGraphicsScene):
                     try:
                         from scripts.nodegraph_ui import nodes as nodes_mod
                     except Exception:
+                        print(f"\033[31m[ui_node_scene]\033[0;0m create_node_from_key: failed to import nodes module for lookup")
                         nodes_mod = None
 
             if nodes_mod is None:
-                print(f"[ui_node_scene] create_node_from_key: failed to import nodes module for lookup")
+                print(f"\033[31m[ui_node_scene]\033[0;0m create_node_from_key: failed to import nodes module for lookup")
                 return None
-
-            print(f"[ui_node_scene] create_node_from_key: nodes module = {getattr(nodes_mod, '__name__', repr(nodes_mod))}")
 
             # direct mapping of known classes
             mapping = {}
@@ -57,11 +56,10 @@ class NodeScene(QGraphicsScene):
                         mapping[name] = obj
                 except Exception:
                     pass
-            print(f"[ui_node_scene] create_node_from_key: mapping keys sample={list(mapping.keys())[:20]}")
-
+            
             # try direct lookup
             cls = mapping.get(cls_name)
-            print(f"[ui_node_scene] lookup attempt: cls_name='{cls_name}' -> {cls}")
+            print(f"[ui_node_scene] lookup attempt: cls_name='{cls_name}' -> {cls}...", end='')
             if cls is None:
                 # try getattr on module (handles exact class names)
                 cls = getattr(nodes_mod, cls_name, None)
@@ -94,6 +92,7 @@ class NodeScene(QGraphicsScene):
 
             if cls is None:
                 return None
+            print("\033[32mSuccess.\033[0m]")
 
             node = cls()
             self.graph.add_node(node)
@@ -112,6 +111,7 @@ class NodeScene(QGraphicsScene):
                 self.addItem(item)
                 return item
             except Exception as e:
+                print("\033[32mError.\033[0m")
                 print(f"[ui_node_scene] create_node_from_key: failed to create NodeItem for {cls_name}: {e}")
                 return None
         except Exception:

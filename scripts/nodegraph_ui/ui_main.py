@@ -21,6 +21,7 @@ from scripts.nodegraph_ui.ui_node_item import NodeItemInput, NodeItemProcessor, 
 from scripts.nodegraph_ui.ui_connection_item import ConnectionItem
 
 from scripts.nodegraph_ui.classes import Graph, SocketType, Node, InputSocket, OutputSocket
+from scripts.nodegraph_ui import classes as classes_mod
 from scripts.nodegraph_ui.nodes import SourceImageNode
 from scripts.nodegraph_ui.nodes import *
 import json
@@ -910,7 +911,10 @@ class MainWindow(QMainWindow):
         # Save / Load graph actions
         save_action = tb.addAction('Save Graph')
         load_action = tb.addAction('Load Graph')
+        reopen_action = tb.addAction('Reopen Graph')
         
+
+
         clear_console_action = tb.addAction('Clear Console')
         clear_console_action.triggered.connect(lambda: os.system('cls'))  # ANSI escape code to clear console
 
@@ -1003,6 +1007,185 @@ class MainWindow(QMainWindow):
                 import traceback
                 traceback.print_exc()
 
+        def _load_previous_graph():
+            """Automatically load the most recently saved graph from the 'saved' directory for convenience."""
+            try:
+                import glob
+                
+                # Pfad zum "saved"-Ordner definieren
+                saved_dir = os.path.join(os.getcwd(), 'saved')
+                if not os.path.exists(saved_dir):
+                    print("[_load_previous_graph] No 'saved' directory found.")
+                    return
+                
+                # Alle JSON-Dateien im Verzeichnis finden
+                json_files = glob.glob(os.path.join(saved_dir, '*.json'))
+                if not json_files:
+                    print("[_load_previous_graph] No saved graph JSON files found in 'saved/'.")
+                    return
+                
+                # Die neueste Datei anhand der Modifikationszeit (mtime) ermitteln
+                latest_file = max(json_files, key=os.path.getmtime)
+                print(f"[_load_previous_graph] Automatically loading latest graph: {latest_file}")
+                
+                # -------------------------------------------------------------
+                # Nutzt die exakte Logik aus _load_graph(), um Duplikate zu vermeiden
+                # -------------------------------------------------------------
+                with open(latest_file, 'r', encoding='utf-8') as f:
+                    doc = json.load(f)
+                nodes_doc = doc.get('nodes', [])
+                conns_doc = doc.get('connections', [])
+
+                # Bestehende Szene und Graphen leeren
+                try:
+                    for it in list(self.scene.items()):
+                        try:
+                            if isinstance(it, (NodeItemInput, NodeItemProcessor, NodeItemOutput, ConnectionItem)):
+                                n = getattr(it, 'node', None)
+                                try:
+                                    if n in self.graph.nodes:
+                                        self.graph.nodes.remove(n)
+                                except Exception:
+                                    pass
+                                try:
+                                    self.scene.removeItem(it)
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+                    try:
+                        self.graph.connections.clear()
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+
+                # Nodes wiederherstellen
+                created_items = []
+                try:
+                    from scripts.nodegraph_ui import nodes as nodes_mod
+                except Exception:
+                    nodes_mod = None
+
+                for nd in nodes_doc:
+                    try:
+                        cls_name = nd.get('class')
+                        cls = None
+                        if nodes_mod is not None:
+                            cls = getattr(nodes_mod, cls_name, None)
+                        if cls is None:
+                            cls = getattr(classes_mod, cls_name, None)
+                        if cls is None:
+                            cls = globals().get(cls_name)
+                        if cls is None:
+                            continue
+                        node = cls()
+                        attrs = nd.get('attrs', {}) or {}
+                        try:
+                            for k, v in attrs.items():
+                                try:
+                                    setattr(node, k, v)
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+                        self.graph.add_node(node)
+                        if hasattr(node, 'node_type'):
+                            if node.node_type == 'input':
+                                item = NodeItemInput(node)
+                            elif node.node_type == 'output':
+                                item = NodeItemOutput(node)
+                            else:
+                                item = NodeItemProcessor(node)
+                        else:
+                            item = NodeItemProcessor(node)
+                        pos = nd.get('pos', [0,0])
+                        try:
+                            item.setPos(pos[0], pos[1])
+                        except Exception:
+                            pass
+                        self.scene.addItem(item)
+                        
+                        try:
+                            outs = nd.get('outputs', {}) or {}
+                            for oname, oval in outs.items():
+                                try:
+                                    if oname in node.outputs:
+                                        out = node.outputs[oname]
+                                        if hasattr(out, 'socket_type') and str(getattr(out, 'socket_type', '')) in [
+                                            'SocketType.PIL_IMG', 'SocketType.PIL_IMG_MONOCH', 'SocketType.COLOR', 'SocketType.LIST_COLORS']:
+                                            out._cache = None
+                                            out._dirty = True
+                                        else:
+                                            out._cache = oval
+                                            out._dirty = False
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+                        created_items.append(item)
+                    except Exception:
+                        pass
+
+                # Verbindungen wiederherstellen
+                try:
+                    for cd in conns_doc:
+                        try:
+                            out_idx = int(cd.get('out_idx'))
+                            in_idx = int(cd.get('in_idx'))
+                            out_name = cd.get('out_name')
+                            in_name = cd.get('in_name')
+                            if out_idx < 0 or out_idx >= len(created_items) or in_idx < 0 or in_idx >= len(created_items):
+                                continue
+                            out_item = created_items[out_idx]
+                            in_item = created_items[in_idx]
+                            out_node = out_item.node
+                            in_node = in_item.node
+                            out_sock = out_node.outputs.get(out_name)
+                            in_sock = in_node.inputs.get(in_name)
+                            if out_sock is None or in_sock is None:
+                                continue
+                            try:
+                                self.graph.connect(out_sock, in_sock)
+                            except Exception:
+                                pass
+                            else:
+                                try:
+                                    start_ui = None
+                                    end_ui = None
+                                    for it in list(self.scene.items()):
+                                        try:
+                                            from scripts.nodegraph_ui.ui_socket_item import SocketItem
+                                            if isinstance(it, SocketItem):
+                                                try:
+                                                    if getattr(it, 'socket', None) is out_sock:
+                                                        start_ui = it
+                                                    if getattr(it, 'socket', None) is in_sock:
+                                                        end_ui = it
+                                                    if start_ui is not None and end_ui is not None:
+                                                        break
+                                                except Exception:
+                                                    pass
+                                        except Exception:
+                                            pass
+                                    if start_ui is not None and end_ui is not None:
+                                        try:
+                                            conn_item = ConnectionItem(start_ui)
+                                            conn_item.set_end_socket(end_ui)
+                                            self.scene.addItem(conn_item)
+                                        except Exception:
+                                            pass
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
+            except Exception:
+                import traceback
+                traceback.print_exc()
+
         def _load_graph():
             try:
                 path, _ = QFileDialog.getOpenFileName(self, 'Load Graph', 'saved', 'JSON Files (*.json)')
@@ -1017,7 +1200,7 @@ class MainWindow(QMainWindow):
                 try:
                     for it in list(self.scene.items()):
                         try:
-                            if isinstance(it, (NodeItemInput, NodeItemProcessor, NodeItemOutput)):
+                            if isinstance(it, (NodeItemInput, NodeItemProcessor, NodeItemOutput, ConnectionItem)):
                                 # remove backend node
                                 n = getattr(it, 'node', None)
                                 try:
@@ -1052,6 +1235,8 @@ class MainWindow(QMainWindow):
                         cls = None
                         if nodes_mod is not None:
                             cls = getattr(nodes_mod, cls_name, None)
+                        if cls is None:
+                            cls = getattr(classes_mod, cls_name, None)
                         if cls is None:
                             # try global lookup
                             cls = globals().get(cls_name)
@@ -1168,6 +1353,7 @@ class MainWindow(QMainWindow):
 
         save_action.triggered.connect(_save_graph)
         load_action.triggered.connect(_load_graph)
+        reopen_action.triggered.connect(_load_previous_graph)
 
         # debug: show node coordinates overlay
         show_coords_action = tb.addAction('Show Coords')
